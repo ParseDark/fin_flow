@@ -1147,8 +1147,8 @@ function renderHtml() {
 
       .concepts-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-        gap: 16px;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 10px;
       }
 
       .concepts-grid.has-two-columns {
@@ -1158,22 +1158,23 @@ function renderHtml() {
       .concept-column {
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 6px;
       }
 
       .concept-column-title {
-        font-size: 15px;
+        font-size: 13px;
         font-weight: 600;
         letter-spacing: -0.02em;
-        padding-bottom: 6px;
+        padding-bottom: 4px;
         border-bottom: 1px solid var(--line-soft);
       }
 
       .concept-item {
         display: flex;
         flex-direction: column;
-        gap: 10px;
-        border-radius: 20px;
+        gap: 4px;
+        padding: 10px 14px;
+        border-radius: 12px;
       }
 
       .concept-item.flow-in {
@@ -1187,30 +1188,30 @@ function renderHtml() {
       }
 
       .concept-item:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 30px rgba(15, 23, 42, 0.06);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
       }
 
       .concept-top {
         display: flex;
         justify-content: space-between;
-        gap: 12px;
-        margin-bottom: 10px;
+        align-items: center;
+        gap: 8px;
       }
 
       .concept-rank {
         color: var(--muted);
-        font-size: 12px;
+        font-size: 10px;
       }
 
       .concept-name {
-        font-size: 15px;
-        line-height: 1.3;
+        font-size: 13px;
+        line-height: 1.2;
       }
 
       .concept-flow {
-        margin: 8px 0 4px;
-        font-size: 22px;
+        margin: 2px 0;
+        font-size: 18px;
         letter-spacing: -0.04em;
       }
 
@@ -1218,7 +1219,8 @@ function renderHtml() {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 10px;
+        gap: 6px;
+        font-size: 11px;
       }
 
       .concept-chip {
@@ -2385,19 +2387,21 @@ function renderHtml() {
         const filtered = state.conceptFilters.length > 0
           ? concepts.filter((item) => state.conceptFilters.includes(item.code))
           : concepts;
-        const inflow = filtered.filter((item) => item.mainFundDiff >= 0);
-        const outflow = filtered.filter((item) => item.mainFundDiff < 0);
+        const allInflow = filtered.filter((item) => item.mainFundDiff >= 0);
+        const allOutflow = filtered.filter((item) => item.mainFundDiff < 0);
+        const inflow = allInflow.slice(0, 10);
+        const outflow = allOutflow.slice(0, 10);
 
-        function renderColumn(items, label, colorClass) {
+        function renderColumn(items, label, colorClass, total) {
           if (items.length === 0) {
             return '<div class="concept-column">' +
-              '<h3 class="concept-column-title ' + colorClass + '">' + label + ' (' + items.length + ')</h3>' +
+              '<h3 class="concept-column-title ' + colorClass + '">' + label + ' (0/' + total + ')</h3>' +
               '<p class="muted" style="padding:20px 0;text-align:center;">暂无数据</p>' +
             '</div>';
           }
           let idx = 0;
           return '<div class="concept-column">' +
-            '<h3 class="concept-column-title ' + colorClass + '">' + label + ' (' + items.length + ')</h3>' +
+            '<h3 class="concept-column-title ' + colorClass + '">' + label + ' (' + items.length + '/' + total + ')</h3>' +
             items.map((item) => {
               idx += 1;
               const flowClass = item.mainFundDiff >= 0 ? "flow-in" : "flow-out";
@@ -2407,11 +2411,11 @@ function renderHtml() {
               return '<article class="card concept-item group/item ' + flowClass + '" data-tooltip="' + item.name + ' · ' + sideLabel + '" data-side="top">' +
                 '<header class="concept-top">' +
                   '<div><div class="concept-rank">#' + String(idx).padStart(2, "0") + '</div><h2 class="concept-name">' + item.name + '</h2></div>' +
-                  '<span class="' + valueClass + '" style="font-weight:600;font-size:12px;">' + sideLabel + '</span>' +
+                  '<span class="' + valueClass + '" style="font-weight:600;font-size:11px;">' + sideLabel + '</span>' +
                 '</header>' +
                 '<section>' +
                   '<div class="concept-flow ' + valueClass + '">' + formatFund(item.mainFundDiff) + '</div>' +
-                  '<div class="' + changeClass + '">涨跌幅 ' + formatPercent(item.change) + '</div>' +
+                  '<div class="' + changeClass + '" style="font-size:12px;">涨跌幅 ' + formatPercent(item.change) + '</div>' +
                 '</section>' +
                 '<footer class="concept-foot">' +
                   '<p class="muted">代表股 ' + item.leaderStock + '</p>' +
@@ -2422,8 +2426,8 @@ function renderHtml() {
         }
 
         document.getElementById("concepts-grid").innerHTML =
-          renderColumn(inflow, "📈 净流入", "up") +
-          renderColumn(outflow, "📉 净流出", "down");
+          renderColumn(inflow, "📈 净流入", "up", allInflow.length) +
+          renderColumn(outflow, "📉 净流出", "down", allOutflow.length);
 
         document.getElementById("concepts-grid").classList.toggle("has-two-columns", inflow.length > 0 && outflow.length > 0);
       }

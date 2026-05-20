@@ -1516,6 +1516,7 @@ function renderHtml() {
         </div>
         <div id="chart"></div>
         <div class="chart-custom-legend" id="chart-custom-legend"></div>
+        <div id="netflow-chart" style="height:120px;"></div>
         <div class="scrubber">
           <div class="scrubber-head">
             <div class="muted">时间进度</div>
@@ -1580,6 +1581,7 @@ function renderHtml() {
       const timeline = document.getElementById("timeline");
       const speedButtons = Array.from(document.querySelectorAll(".speed-btn"));
       let chart;
+      let netFlowChart;
       let dateController;
       function initCombobox({ trigger, popover, listbox, valueInput, filterInput, onSelect }) {
         let open = false;
@@ -1919,6 +1921,61 @@ function renderHtml() {
           }
           startPlayback();
         }
+      }
+
+      function ensureNetFlowChart() {
+        if (netFlowChart) return netFlowChart;
+        netFlowChart = Highcharts.chart("netflow-chart", {
+          chart: {
+            backgroundColor: "transparent",
+            animation: false,
+            spacing: [0, 8, 4, 8],
+            height: 120,
+          },
+          title: { text: "市场净资金", align: "left", style: { color: "rgba(244,244,245,0.7)", fontSize: "11px", fontWeight: "400" } },
+          credits: { enabled: false },
+          exporting: { enabled: false },
+          legend: { enabled: false },
+          xAxis: {
+            categories: [],
+            tickLength: 0,
+            lineWidth: 0,
+            labels: { enabled: false },
+          },
+          yAxis: {
+            title: { text: null },
+            gridLineWidth: 1,
+            gridLineColor: "rgba(244,244,245,0.06)",
+            labels: {
+              style: { color: "rgba(244,244,245,0.5)", fontSize: "10px" },
+              formatter() { return formatFund(this.value); },
+            },
+            plotLines: [{ value: 0, color: "rgba(250,250,250,0.2)", width: 1, zIndex: 4 }],
+          },
+          tooltip: {
+            backgroundColor: "rgba(9,9,11,0.96)",
+            borderColor: "rgba(244,244,245,0.08)",
+            style: { color: "#fafafa", fontSize: "11px" },
+            formatter() { return "<b>" + this.x + "</b><br/>净资金: " + formatFund(this.y); },
+          },
+          plotOptions: {
+            column: {
+              grouping: false,
+              groupPadding: 0,
+              pointPadding: 0.05,
+              borderWidth: 0,
+              animation: { duration: 200 },
+            },
+          },
+          series: [{
+            id: "netflow-bars",
+            type: "column",
+            name: "净资金",
+            zIndex: 1,
+            data: [],
+          }],
+        });
+        return netFlowChart;
       }
 
       function ensureChart() {
@@ -2330,40 +2387,30 @@ function renderHtml() {
             const isTopMarker = featured.top.some((item) => ("marker-" + item.code) === series.options.id);
             const isTrail = featured.top.some((item) => ("trail-" + item.code) === series.options.id);
             const isBottomMarker = featured.bottom.some((item) => ("marker-bottom-" + item.code) === series.options.id);
-            const isNetFlow = series.options.id === "net-flow-bars";
             const isConcentrationMarker = series.options.id === "conc-inflow-marker" || series.options.id === "conc-outflow-marker";
-            return !isPrimary && !isNetFlow && !isConcentration && !isConcentrationMarker && !isTopMarker && !isTrail && !isBottomMarker;
+            return !isPrimary && !isConcentration && !isConcentrationMarker && !isTopMarker && !isTrail && !isBottomMarker;
           })
           .forEach((series) => series.remove(false));
 
-        // Net flow column (market strength)
+        // Net flow bar chart (separate chart below)
+        const nfChart = ensureNetFlowChart();
         const netFlowData = data.chart.netFlow || [];
         const netFlowVisible = visiblePlaybackData(netFlowData);
-        const netFlowExisting = currentChart.series.find((s) => s.options.id === "net-flow-bars");
-        const netFlowSeries = {
-          id: "net-flow-bars",
-          type: "column",
-          name: "市场净资金",
-          yAxis: 0,
-          showInLegend: false,
-          enableMouseTracking: false,
-          zIndex: 0,
-          grouping: false,
-          groupPadding: 0,
-          pointPadding: 0,
-          borderWidth: 0,
-          pointWidth: 4,
-          data: netFlowVisible.map((v, i) => ({
-            x: i,
-            y: v,
-            color: v != null ? (v >= 0 ? "rgba(22,163,74,0.30)" : "rgba(220,38,38,0.30)") : "transparent",
-          })),
-        };
-        if (netFlowExisting) {
-          netFlowExisting.setData(netFlowSeries.data, false, { duration: 260 });
-        } else {
-          currentChart.addSeries(netFlowSeries, false, { duration: 260 });
-        }
+        nfChart.xAxis[0].setCategories(data.sampleTimes, false);
+        const nfSeries = nfChart.series[0];
+        nfSeries.setData(netFlowVisible.map((v, i) => ({
+          x: i,
+          y: v,
+          color: v != null ? (v >= 0 ? "rgba(22,163,74,0.5)" : "rgba(220,38,38,0.5)") : "transparent",
+        })), false);
+        nfChart.redraw();
+        // Draw cursor line on net flow chart too
+        nfChart.xAxis[0].removePlotLine("nf-playhead");
+        nfChart.xAxis[0].addPlotLine({ id: "nf-playhead", value: state.index, color: "#ffd36b", width: 1.5, zIndex: 5 });
+
+        // Remove inline net flow series from main chart if it exists
+        const oldNf = currentChart.series.find((s) => s.options.id === "net-flow-bars");
+        if (oldNf) oldNf.remove(false);
 
         currentChart.redraw();
         drawCursor();

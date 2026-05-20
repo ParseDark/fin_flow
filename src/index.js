@@ -1006,7 +1006,10 @@ function renderHtml() {
         flex-shrink: 0;
       }
 
-      #chart {
+      #chart,
+      #netflow-chart,
+      #emotion-chart {
+        border: 1px solid rgba(24, 24, 27, 0.14);
         border-radius: 20px;
         background:
           linear-gradient(180deg, rgba(24, 24, 27, 0.96), rgba(39, 39, 42, 0.94)),
@@ -1016,7 +1019,9 @@ function renderHtml() {
           0 8px 30px rgba(0, 0, 0, 0.08);
       }
 
-      .dark #chart {
+      .dark #chart,
+      .dark #netflow-chart,
+      .dark #emotion-chart {
         border-color: rgba(244, 244, 245, 0.08);
         background:
           linear-gradient(180deg, rgba(9, 9, 11, 0.98), rgba(24, 24, 27, 0.96)),
@@ -1609,8 +1614,8 @@ function renderHtml() {
         </div>
         <div id="chart"></div>
         <div class="chart-custom-legend" id="chart-custom-legend"></div>
-        <div id="netflow-chart" style="height:120px;"></div>
-        <div id="emotion-chart" style="height:160px;"></div>
+        <div id="netflow-chart" style="height:120px;margin-top:8px;"></div>
+        <div id="emotion-chart" style="height:180px;margin-top:8px;"></div>
         <div class="scrubber">
           <div class="scrubber-head">
             <div class="muted">时间进度</div>

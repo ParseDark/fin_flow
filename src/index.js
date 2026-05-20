@@ -181,7 +181,7 @@ export class CapitalFlowCollector extends DurableObject {
         degree: parseFloat(emoData.market_degree) || 0,
         balance: balNum,
         balanceChange: chgNum,
-        previewBalance: parseBal(emoData.preview_balance || ""),
+        previewChange: chgNum,
         previewChangeStr: emoData.preview_balance_change_px || "",
         balanceStr: emoData.shsz_balance || "",
         balanceChangeStr: chg,
@@ -266,7 +266,7 @@ export class CapitalFlowCollector extends DurableObject {
       emotionSeries: {
         degree: samples.map((s) => (s.emotion || {}).degree || null),
         balance: samples.map((s) => (s.emotion || {}).balance || null),
-        previewBalance: samples.map((s) => (s.emotion || {}).previewBalance || null),
+        previewChange: samples.map((s) => (s.emotion || {}).previewChange || null),
       },
     };
   }
@@ -2133,7 +2133,7 @@ function renderHtml() {
           }, {
             id: "emo-balance", type: "area", name: "成交量", yAxis: 1, color: "rgba(59,130,246,0.2)", lineColor: "rgba(59,130,246,0.6)", lineWidth: 1.5, fillOpacity: 0.15, zIndex: 1, data: [],
           }, {
-            id: "emo-preview", type: "spline", name: "预估成交量", yAxis: 1, color: "rgba(59,130,246,0.5)", lineWidth: 1.2, dashStyle: "Dash", zIndex: 0, data: [],
+            id: "emo-preview", type: "spline", name: "预估增量", yAxis: 1, color: "rgba(59,130,246,0.5)", lineWidth: 1.2, dashStyle: "Dash", zIndex: 0, data: [],
           }],
         });
         return emotionChart;
@@ -2580,7 +2580,7 @@ function renderHtml() {
         const previewSeries = emoChart.series.find((s) => s.options.id === "emo-preview");
         degreeSeries.setData(visiblePlaybackData(emoData.degree), false);
         balanceSeries.setData(visiblePlaybackData(emoData.balance), false);
-        previewSeries.setData(visiblePlaybackData(emoData.previewBalance || []), false);
+        previewSeries.setData(visiblePlaybackData(emoData.previewChange || []), false);
         emoChart.redraw();
         emoChart.xAxis[0].removePlotLine("emo-playhead");
         emoChart.xAxis[0].addPlotLine({ id: "emo-playhead", value: state.index, color: "#ffd36b", width: 1.5, zIndex: 5 });
@@ -2702,7 +2702,7 @@ function renderHtml() {
         const chg = emo.balanceChange || 0;
         chgEl.textContent = (chg >= 0 ? "+" : "") + formatFund(chg);
         chgEl.className = chg >= 0 ? "up" : "down";
-        document.getElementById("emotion-preview").textContent = emo.previewBalanceStr || "--";
+        document.getElementById("emotion-preview").textContent = emo.previewChangeStr || "--";
         document.getElementById("emotion-updown").textContent = (emo.riseNum || "--") + " / " + (emo.fallNum || "--");
         document.getElementById("emotion-ratio").textContent = emo.upRatio || "--";
         document.getElementById("emotion-perf").textContent = emo.performance || "--";

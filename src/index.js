@@ -3,6 +3,9 @@ import { DurableObject } from "cloudflare:workers";
 const API_URL =
   "https://x-quote.cls.cn/web_quote/plate/plate_list?app=CailianpressWeb&os=web&page=1&rever=1&sv=8.4.6&type=concept&way=main_fund_diff&sign=2cfab3ce449fe7f69f25e951003ed082";
 
+const REVERSE_API_URL =
+  "https://x-quote.cls.cn/web_quote/plate/plate_list?app=CailianpressWeb&os=web&page=1&rever=0&sv=8.4.6&type=concept&way=main_fund_diff&sign=4bb3a71eb50aaeff3c50f908503cda5a";
+
 const REQUEST_HEADERS = {
   "Cache-Control": "no-cache",
   "Content-Type": "application/x-www-form-urlencoded",
@@ -134,14 +137,25 @@ export class CapitalFlowCollector extends DurableObject {
   }
 
   async collectOnce() {
-    const response = await fetch(API_URL, { headers: REQUEST_HEADERS });
-    if (!response.ok) {
-      throw new Error(`Upstream request failed: ${response.status}`);
+    const [conceptRes, reverseRes] = await Promise.all([
+      fetch(API_URL, { headers: REQUEST_HEADERS }),
+      fetch(REVERSE_API_URL, { headers: REQUEST_HEADERS }).catch(() => null),
+    ]);
+
+    if (!conceptRes.ok) {
+      throw new Error(`Upstream request failed: ${conceptRes.status}`);
     }
 
-    const json = await response.json();
+    const json = await conceptRes.json();
     const list = json?.data?.plate_data || [];
     const groups = buildFlowGroups(list);
+
+    let reverseList = [];
+    if (reverseRes && reverseRes.ok) {
+      const revJson = await reverseRes.json();
+      reverseList = revJson?.data?.plate_data || [];
+    }
+    const reverseGroups = buildFlowGroups(reverseList);
 
     const latestSnapshot = {
       updatedAt: new Date().toISOString(),
@@ -150,6 +164,7 @@ export class CapitalFlowCollector extends DurableObject {
       laggards: groups.laggards,
       concepts: groups.ranking,
       ranking: groups.ranking,
+      reverse: reverseGroups.ranking.slice(0, DISPLAY_CONCEPT_COUNT),
     };
 
     const dateKey = getChinaDateKey(new Date(latestSnapshot.updatedAt));
@@ -184,6 +199,9 @@ export class CapitalFlowCollector extends DurableObject {
     const latest = await this.ctx.storage.get("latest");
     const tracked = trackedSeriesFromSamples(samples);
 
+    // Reverse tracked series
+    const reverseTracked = trackedReverseSeriesFromSamples(samples);
+
     return {
       requestedDate: targetDate,
       availableDates,
@@ -199,6 +217,14 @@ export class CapitalFlowCollector extends DurableObject {
           name: item.name,
           data: samples.map((sample) => {
             const match = [...sample.leaders, ...sample.laggards].find((entry) => entry.code === item.code);
+            return match ? match.mainFundDiff : null;
+          }),
+        })),
+        reverseSeries: reverseTracked.map((item) => ({
+          code: item.code,
+          name: item.name,
+          data: samples.map((sample) => {
+            const match = (sample.reverse || []).find((entry) => entry.code === item.code);
             return match ? match.mainFundDiff : null;
           }),
         })),
@@ -328,6 +354,7 @@ function compactSample(snapshot) {
     leaders: snapshot.leaders.map(compactItem),
     laggards: snapshot.laggards.map(compactItem),
     concepts: snapshot.concepts.map(compactItem),
+    revers: (snapshot.reverse || []).map(compactItem),
   };
 }
 
@@ -348,6 +375,7 @@ function expandSample(sample) {
     leaders: sample.leaders.map(expandItem),
     laggards: sample.laggards.map(expandItem),
     concepts: (sample.concepts || []).map(expandItem),
+    reverse: (sample.revers || []).map(expandItem),
   };
 }
 
@@ -385,6 +413,20 @@ async function appendSampleToDay(storage, dateKey, sample) {
 function trackedSeriesFromSamples(samples) {
   const latest = samples.at(-1);
   const tracked = latest.concepts?.length ? latest.concepts : [...latest.leaders, ...latest.laggards];
+  const deduped = new Map();
+
+  tracked.forEach((item) => {
+    if (!deduped.has(item.code)) {
+      deduped.set(item.code, { code: item.code, name: item.name });
+    }
+  });
+
+  return [...deduped.values()];
+}
+
+function trackedReverseSeriesFromSamples(samples) {
+  const latest = samples.at(-1);
+  const tracked = latest.reverse || [];
   const deduped = new Map();
 
   tracked.forEach((item) => {
@@ -1006,6 +1048,20 @@ function renderHtml() {
         background: rgba(63, 63, 70, 0.08);
       }
 
+      .toggle-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        font-size: 12px;
+        color: var(--muted);
+        user-select: none;
+      }
+
+      .toggle-label input[type="checkbox"] {
+        accent-color: var(--accent);
+      }
+
       .featured-legend {
         display: flex;
         flex-wrap: wrap;
@@ -1355,6 +1411,10 @@ function renderHtml() {
             <button class="btn-secondary speed-btn" data-speed="20" type="button">20x</button>
             <button class="btn-secondary speed-btn" data-speed="40" type="button">40x</button>
             <button class="btn-secondary speed-btn" data-speed="60" type="button">60x</button>
+            <label class="toggle-label">
+              <input type="checkbox" id="reverse-toggle" checked>
+              <span class="toggle-text">逆向资金</span>
+            </label>
           </div>
         </div>
         <div id="chart"></div>
@@ -1406,6 +1466,7 @@ function renderHtml() {
         conceptFilters: [],
         colorMap: {},
         playbackSpeed: 40,
+        showReverse: true,
       };
 
       readUrlParams();
@@ -1692,9 +1753,11 @@ function renderHtml() {
       }
 
       function buildColorMap(data) {
-        const order = data.chart.series.map((item) => item.code);
+        const conceptCodes = data.chart.series.map((item) => item.code);
+        const reverseCodes = (data.chart.reverseSeries || []).map((item) => item.code);
+        const allCodes = [...conceptCodes, ...reverseCodes];
         state.colorMap = Object.fromEntries(
-          order.map((code, index) => [code, COLORS[index % COLORS.length]]),
+          allCodes.map((code, index) => [code, COLORS[index % COLORS.length]]),
         );
       }
 
@@ -2040,6 +2103,48 @@ function renderHtml() {
           }
         });
 
+        // Reverse series (逆向排序的资金流，dashed)
+        const reverseSeries = state.showReverse
+          ? (data.chart.reverseSeries || []).filter((item) => {
+              if (state.conceptFilters.length > 0) return state.conceptFilters.includes(item.code);
+              return true;
+            })
+          : [];
+
+        if (state.showReverse) {
+          reverseSeries.forEach((item) => {
+            const revId = "rev-" + item.code;
+            const existing = currentChart.series.find((series) => series.options.id === revId);
+            const color = colorForCode(item.code);
+            const options = {
+              id: revId,
+              type: "spline",
+              name: item.name + " · 逆向",
+              color,
+              dashStyle: "Dash",
+              lineWidth: 1.5,
+              opacity: 0.7,
+              zoneAxis: "y",
+              zones: [
+                { value: 0, color: "#16a34a" },
+                { color },
+              ],
+              data: visiblePlaybackData(item.data),
+            };
+
+            if (existing) {
+              existing.update({ name: item.name + " · 逆向", color, zones: options.zones, dashStyle: "Dash" }, false);
+              existing.setData(options.data, false, { duration: 300 });
+            } else {
+              currentChart.addSeries(options, false, { duration: 300 });
+            }
+          });
+        } else {
+          currentChart.series
+            .filter((series) => series.options.id && series.options.id.startsWith("rev-"))
+            .forEach((series) => series.remove(false));
+        }
+
         const concentrationExisting = currentChart.series.find((series) => series.options.id === "concentration-series");
         const concentrationMarkerExisting = currentChart.series.find((series) => series.options.id === "concentration-marker");
         const concentrationSeries = {
@@ -2200,12 +2305,13 @@ function renderHtml() {
         currentChart.series
           .filter((series) => {
             const isPrimary = visibleSeries.some((item) => item.code === series.options.id);
+            const isReverse = reverseSeries.some((item) => ("rev-" + item.code) === series.options.id);
             const isConcentration = series.options.id === "concentration-series";
             const isTopMarker = featured.top.some((item) => ("marker-" + item.code) === series.options.id);
             const isTrail = featured.top.some((item) => ("trail-" + item.code) === series.options.id);
             const isBottomMarker = featured.bottom.some((item) => ("marker-bottom-" + item.code) === series.options.id);
             const isConcentrationMarker = series.options.id === "concentration-marker";
-            return !isPrimary && !isConcentration && !isConcentrationMarker && !isTopMarker && !isTrail && !isBottomMarker;
+            return !isPrimary && !isReverse && !isConcentration && !isConcentrationMarker && !isTopMarker && !isTrail && !isBottomMarker;
           })
           .forEach((series) => series.remove(false));
 
@@ -2404,6 +2510,16 @@ function renderHtml() {
           }
         });
       });
+
+      const reverseToggle = document.getElementById("reverse-toggle");
+      if (reverseToggle) {
+        reverseToggle.addEventListener("change", () => {
+          state.showReverse = reverseToggle.checked;
+          if (state.data) {
+            renderChart(state.data);
+          }
+        });
+      }
 
       fetchDay().then(() => {
         fetchStatus();

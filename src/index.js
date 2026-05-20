@@ -338,22 +338,23 @@ function normalizeConceptList(list) {
 
 function buildFlowGroups(list) {
   const normalized = normalizeConceptList(list);
-  const leaders = normalized
+  const topInflow = normalized
     .filter((item) => Number.isFinite(item.mainFundDiff) && item.mainFundDiff > 0)
     .sort((a, b) => b.mainFundDiff - a.mainFundDiff)
     .slice(0, FLOW_GROUP_SIZE);
 
-  const laggards = normalized
+  const topOutflow = normalized
     .filter((item) => Number.isFinite(item.mainFundDiff) && item.mainFundDiff < 0)
     .sort((a, b) => a.mainFundDiff - b.mainFundDiff)
     .slice(0, FLOW_GROUP_SIZE);
 
-  const ranking = normalized
-    .slice()
-    .sort((a, b) => Math.abs(b.mainFundDiff) - Math.abs(a.mainFundDiff))
-    .slice(0, DISPLAY_CONCEPT_COUNT);
+  // Ranking: 10 inflow + 10 outflow, each sorted by abs desc within group
+  const ranking = [
+    ...topInflow,
+    ...topOutflow,
+  ].sort((a, b) => Math.abs(b.mainFundDiff) - Math.abs(a.mainFundDiff));
 
-  return { leaders, laggards, ranking };
+  return { leaders: topInflow, laggards: topOutflow, ranking };
 }
 
 function compactSample(snapshot) {
@@ -421,7 +422,11 @@ async function appendSampleToDay(storage, dateKey, sample) {
 
 function trackedSeriesFromSamples(samples) {
   const latest = samples.at(-1);
-  const tracked = latest.concepts?.length ? latest.concepts : [...latest.leaders, ...latest.laggards];
+  const all = latest.concepts?.length ? latest.concepts : [...latest.leaders, ...latest.laggards];
+  // Take top 5 inflow + top 5 outflow for cleaner chart
+  const topIn = all.filter((item) => item.mainFundDiff > 0).slice(0, 5);
+  const topOut = all.filter((item) => item.mainFundDiff < 0).slice(0, 5);
+  const tracked = [...topIn, ...topOut].sort((a, b) => Math.abs(b.mainFundDiff) - Math.abs(a.mainFundDiff));
   const deduped = new Map();
 
   tracked.forEach((item) => {
@@ -435,7 +440,10 @@ function trackedSeriesFromSamples(samples) {
 
 function trackedReverseSeriesFromSamples(samples) {
   const latest = samples.at(-1);
-  const tracked = latest.reverse || [];
+  const all = latest.reverse || [];
+  const topIn = all.filter((item) => item.mainFundDiff > 0).slice(0, 5);
+  const topOut = all.filter((item) => item.mainFundDiff < 0).slice(0, 5);
+  const tracked = [...topIn, ...topOut].sort((a, b) => Math.abs(b.mainFundDiff) - Math.abs(a.mainFundDiff));
   const deduped = new Map();
 
   tracked.forEach((item) => {

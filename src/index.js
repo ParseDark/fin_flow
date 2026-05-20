@@ -2097,6 +2097,7 @@ function renderHtml() {
             labels: { style: { color: "rgba(244,244,245,0.4)", fontSize: "10px" }, formatter() { return formatFund(this.value); } },
           }],
           tooltip: {
+            shared: true,
             backgroundColor: "rgba(9,9,11,0.96)",
             borderColor: "rgba(244,244,245,0.08)",
             style: { color: "#fafafa", fontSize: "11px" },

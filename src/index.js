@@ -224,6 +224,10 @@ export class CapitalFlowCollector extends DurableObject {
             return match ? match.mainFundDiff : null;
           }),
         })),
+        netFlow: samples.map((sample) => {
+          const all = [...sample.leaders, ...sample.laggards];
+          return all.reduce((sum, item) => sum + (item.mainFundDiff || 0), 0);
+        }),
       },
     };
   }
@@ -1883,6 +1887,12 @@ function renderHtml() {
                 formatter() { return this.value + "%"; },
               },
             },
+            {
+              title: { text: null },
+              opposite: false,
+              gridLineWidth: 0,
+              visible: false,
+            },
           ],
           tooltip: {
             shared: true,
@@ -2158,10 +2168,38 @@ function renderHtml() {
             const isTopMarker = featured.top.some((item) => ("marker-" + item.code) === series.options.id);
             const isTrail = featured.top.some((item) => ("trail-" + item.code) === series.options.id);
             const isBottomMarker = featured.bottom.some((item) => ("marker-bottom-" + item.code) === series.options.id);
+            const isNetFlow = series.options.id === "net-flow-bars";
             const isConcentrationMarker = series.options.id === "conc-inflow-marker" || series.options.id === "conc-outflow-marker";
-            return !isPrimary && !isConcentration && !isConcentrationMarker && !isTopMarker && !isTrail && !isBottomMarker;
+            return !isPrimary && !isNetFlow && !isConcentration && !isConcentrationMarker && !isTopMarker && !isTrail && !isBottomMarker;
           })
           .forEach((series) => series.remove(false));
+
+        // Net flow column (market strength)
+        const netFlowData = data.chart.netFlow || [];
+        const netFlowVisible = visiblePlaybackData(netFlowData);
+        const netFlowExisting = currentChart.series.find((s) => s.options.id === "net-flow-bars");
+        const netFlowSeries = {
+          id: "net-flow-bars",
+          type: "column",
+          name: "市场净资金",
+          yAxis: 2,
+          showInLegend: true,
+          enableMouseTracking: true,
+          zIndex: 1,
+          groupPadding: 0,
+          pointPadding: 0.1,
+          borderWidth: 0,
+          data: netFlowVisible.map((v, i) => ({
+            x: i,
+            y: v,
+            color: v != null ? (v >= 0 ? "rgba(220,38,38,0.35)" : "rgba(22,163,74,0.35)") : "transparent",
+          })),
+        };
+        if (netFlowExisting) {
+          netFlowExisting.setData(netFlowSeries.data, false, { duration: 260 });
+        } else {
+          currentChart.addSeries(netFlowSeries, false, { duration: 260 });
+        }
 
         currentChart.redraw();
         drawCursor();

@@ -1935,10 +1935,39 @@ function renderHtml() {
             backgroundColor: "rgba(9,9,11,0.96)",
             borderColor: "rgba(244,244,245,0.08)",
             style: { color: "#fafafa" },
+            useHTML: true,
             formatter() {
-              return "<b>" + this.x + "</b><br />" + this.points.map((point) =>
-                '<span style="color:' + point.color + '">●</span> ' + point.series.name + ': ' + formatFund(point.y)
-              ).join("<br />");
+              const pts = this.points.filter((p) => p.series.options.id !== "net-flow-bars" && !p.series.options.id?.startsWith("conc-"));
+              const inflowPts = pts.filter((p) => p.y > 0).sort((a, b) => b.y - a.y);
+              const outflowPts = pts.filter((p) => p.y < 0).sort((a, b) => a.y - b.y);
+
+              let html = '<div style="font-size:13px;font-weight:600;margin-bottom:6px;">' + this.x + '</div>';
+              html += '<div style="display:flex;gap:16px;">';
+
+              // Inflow column
+              html += '<div style="flex:1;min-width:140px;">';
+              html += '<div style="font-size:10px;color:#dc2626;margin-bottom:4px;">📈 净流入</div>';
+              inflowPts.forEach((p) => {
+                html += '<div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;line-height:1.5;">';
+                html += '<span style="color:' + p.color + ';">● ' + p.series.name + '</span>';
+                html += '<span style="color:' + (p.y >= 0 ? '#dc2626' : '#16a34a') + ';font-weight:500;">' + formatFund(p.y) + '</span>';
+                html += '</div>';
+              });
+              html += '</div>';
+
+              // Outflow column
+              html += '<div style="flex:1;min-width:140px;">';
+              html += '<div style="font-size:10px;color:#16a34a;margin-bottom:4px;">📉 净流出</div>';
+              outflowPts.forEach((p) => {
+                html += '<div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;line-height:1.5;">';
+                html += '<span style="color:' + p.color + ';">● ' + p.series.name + '</span>';
+                html += '<span style="color:' + (p.y >= 0 ? '#dc2626' : '#16a34a') + ';font-weight:500;">' + formatFund(p.y) + '</span>';
+                html += '</div>';
+              });
+              html += '</div>';
+
+              html += '</div>';
+              return html;
             },
           },
           plotOptions: {

@@ -681,17 +681,6 @@ function renderHtml() {
         gap: 16px;
       }
 
-      .hero-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 10px;
-        width: fit-content;
-        padding: 10px 14px;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        background: rgba(15, 23, 42, 0.03);
-      }
-
       .status-rail {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -716,21 +705,6 @@ function renderHtml() {
       .status-pill .value {
         font-size: 14px;
         color: var(--text);
-      }
-
-      .hero-dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 999px;
-        background: var(--accent);
-        box-shadow: 0 0 0 0 rgba(63, 63, 70, 0.18);
-        animation: pulse 1.8s infinite;
-      }
-
-      @keyframes pulse {
-        0% { box-shadow: 0 0 0 0 rgba(63, 63, 70, 0.18); }
-        70% { box-shadow: 0 0 0 12px rgba(63, 63, 70, 0); }
-        100% { box-shadow: 0 0 0 0 rgba(63, 63, 70, 0); }
       }
 
       .controls {
@@ -1174,21 +1148,6 @@ function renderHtml() {
         font-size: 11px;
       }
 
-      .concept-code {
-        width: fit-content;
-        border: 1px solid var(--line-soft);
-        border-radius: 999px;
-        padding: 3px 8px;
-        font-size: 11px;
-        line-height: 1;
-        color: var(--muted);
-        background: rgba(15, 23, 42, 0.03);
-      }
-
-      .dark .concept-code {
-        background: rgba(244, 244, 245, 0.04);
-      }
-
       .muted { color: var(--muted); }
       .up { color: var(--up); }
       .down { color: var(--down); }
@@ -1264,10 +1223,7 @@ function renderHtml() {
               <div class="value"><kbd id="status-samples">--</kbd></div>
             </div>
           </div>
-          <div class="hero-badge">
-            <span class="hero-dot"></span>
-            <span>后台 10 秒采集，前端只读快照</span>
-          </div>
+
         </article>
       </section>
 
@@ -1315,7 +1271,6 @@ function renderHtml() {
               </header>
               <div role="listbox" id="concept-combobox-listbox" aria-orientation="vertical" aria-labelledby="concept-combobox-trigger" data-empty="暂无概念数据"></div>
             </div>
-            <input id="concept-combobox-value" type="hidden" name="concept-code" value="">
           </div>
         </div>
         <div class="panel" style="padding:12px 14px;">
@@ -1463,7 +1418,6 @@ function renderHtml() {
       const conceptTrigger = document.getElementById("concept-combobox-trigger");
       const conceptPopover = document.getElementById("concept-combobox-popover");
       const conceptListbox = document.getElementById("concept-combobox-listbox");
-      const conceptValueInput = document.getElementById("concept-combobox-value");
       const conceptFilterInput = conceptPopover ? conceptPopover.querySelector("input") : null;
       const playBtn = document.getElementById("play-btn");
       const latestBtn = document.getElementById("latest-btn");
@@ -1747,10 +1701,6 @@ function renderHtml() {
 
       function setComboboxValue(value) {
         if (dateController) dateController.selectByValue(value);
-      }
-
-      function setConceptComboboxValue(value, label) {
-        if (conceptController) conceptController.selectByValue(value || "__all__");
       }
 
       function renderDateOptions(availableDates, selectedDate) {
@@ -2288,7 +2238,7 @@ function renderHtml() {
             '</section>' +
             '<footer class="concept-foot">' +
               '<p class="muted">代表股 ' + item.leaderStock + '</p>' +
-              '<span class="concept-code">' + item.code + '</span>' +
+
             '</footer>' +
           '</article>';
         }).join("");
@@ -2378,7 +2328,6 @@ function renderHtml() {
         trigger: conceptTrigger,
         popover: conceptPopover,
         listbox: conceptListbox,
-        valueInput: conceptValueInput,
         filterInput: conceptFilterInput,
         multi: true,
         onSelect: (code) => {

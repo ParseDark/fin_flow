@@ -920,7 +920,7 @@ function renderHtml() {
       }
 
       #chart {
-        height: 520px;
+        height: 580px;
         border: 1px solid rgba(24, 24, 27, 0.14);
         border-radius: 20px;
         background:
@@ -1836,12 +1836,33 @@ function renderHtml() {
             plotBackgroundColor: "rgba(9, 9, 11, 0.18)",
             animation: false,
             spacing: [12, 8, 8, 8],
+            marginBottom: 70,
           },
           title: { text: null },
           credits: { enabled: false },
           exporting: { enabled: false },
           legend: {
-            enabled: false,
+            enabled: true,
+            align: "center",
+            verticalAlign: "bottom",
+            layout: "horizontal",
+            itemStyle: {
+              color: "rgba(244,244,245,0.78)",
+              fontSize: "11px",
+              fontWeight: "400",
+            },
+            itemHoverStyle: {
+              color: "#fafafa",
+            },
+            itemHiddenStyle: {
+              color: "rgba(244,244,245,0.25)",
+            },
+            symbolRadius: 3,
+            symbolWidth: 14,
+            symbolHeight: 4,
+            itemDistance: 14,
+            itemMarginTop: 2,
+            itemMarginBottom: 2,
           },
           xAxis: {
             categories: [],

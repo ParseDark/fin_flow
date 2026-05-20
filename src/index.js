@@ -1414,10 +1414,10 @@ function renderHtml() {
         <article class="card metric">
           <header class="metric-row">
             <div>
-              <h2 class="metric-label">正向资金概念数</h2>
-              <p class="sr-only">市场广度</p>
+              <h2 class="metric-label">净流入 / 净流出</h2>
+              <p class="sr-only">概念分布</p>
             </div>
-            <span class="badge-secondary">Breadth</span>
+            <span class="badge-secondary">分布</span>
           </header>
           <section>
             <div class="metric-value" id="positive-count">--</div>
@@ -2501,8 +2501,10 @@ function renderHtml() {
           hour12: false,
         }).format(new Date(state.data.updatedAt));
         document.getElementById("selected-date").textContent = state.data.requestedDate;
-        document.getElementById("positive-count").textContent = sample.headline.topCount;
-        document.getElementById("positive-sub").textContent = "总概念数 " + sample.headline.totalCount;
+        const infCnt = sample.concepts?.filter((c) => c.mainFundDiff > 0).length || 0;
+        const outfCnt = sample.concepts?.filter((c) => c.mainFundDiff < 0).length || 0;
+        document.getElementById("positive-count").textContent = infCnt + " / " + outfCnt;
+        document.getElementById("positive-sub").textContent = "流入 " + infCnt + " 个 · 流出 " + outfCnt + " 个";
         document.getElementById("inflow-top3-card").textContent = formatFund(concentration.inflowTop3Abs);
         document.getElementById("outflow-top3-card").textContent = formatFund(concentration.outflowTop3Abs);
         document.getElementById("top-three-share").textContent = formatPercent(concentration.inflowShare) + " " + concentration.inflowLabel;

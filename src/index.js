@@ -999,6 +999,22 @@ function renderHtml() {
         background: rgba(63, 63, 70, 0.08);
       }
 
+      .chart-filter-tags {
+        display: inline-flex;
+        gap: 4px;
+        flex-wrap: wrap;
+      }
+
+      .chart-filter-btn {
+        font-size: 11px;
+        padding: 2px 8px;
+      }
+
+      .chart-filter-btn.is-active {
+        border-color: var(--accent);
+        background: rgba(63, 63, 70, 0.08);
+      }
+
       .toggle-label {
         display: inline-flex;
         align-items: center;
@@ -1365,8 +1381,14 @@ function renderHtml() {
             <div class="chart-stats">
               <span class="badge-outline" id="top-three-flow">流入 Top3 --</span>
               <span class="badge-outline" id="top-three-outflow">流出 Top3 --</span>
-              <span class="badge" id="top-three-share" data-tooltip="流入 Top3 占 Top20 绝对值总和的比例。" data-side="bottom">流入集中 --</span>
-              <span class="badge-secondary" id="concentration-badge" data-tooltip="流出 Top3 占 Top20 绝对值总和的比例。" data-side="bottom">流出集中 --</span>
+              <span class="badge" id="top-three-share" data-tooltip="流入 Top3 占流入总值的比例" data-side="bottom">流入集中 --</span>
+              <span class="badge-secondary" id="concentration-badge" data-tooltip="流出 Top3 占流出总值的比例" data-side="bottom">流出集中 --</span>
+              <span class="chart-filter-tags">
+                <button class="btn-outline size-sm chart-filter-btn is-active" data-filter="all">全部</button>
+                <button class="btn-outline size-sm chart-filter-btn" data-filter="top3">关注前三</button>
+                <button class="btn-outline size-sm chart-filter-btn" data-filter="inflow">只看净流入</button>
+                <button class="btn-outline size-sm chart-filter-btn" data-filter="outflow">只看净流出</button>
+              </span>
             </div>
             <div class="featured-legend" id="featured-legend"></div>
           </div>
@@ -1426,6 +1448,7 @@ function renderHtml() {
         timer: null,
         colorMap: {},
         playbackSpeed: 40,
+        chartFilter: "all",
       };
 
       readUrlParams();
@@ -1956,7 +1979,27 @@ function renderHtml() {
       function renderChart(data) {
         const currentChart = ensureChart();
         currentChart.xAxis[0].setCategories(data.sampleTimes, false);
-        const visibleSeries = data.chart.series;
+        let visibleSeries = data.chart.series;
+
+        // Apply chart filter
+        if (state.chartFilter === "inflow") {
+          visibleSeries = visibleSeries.filter((item) => {
+            const last = item.data.findLast((v) => v != null);
+            return last != null && last > 0;
+          });
+        } else if (state.chartFilter === "outflow") {
+          visibleSeries = visibleSeries.filter((item) => {
+            const last = item.data.findLast((v) => v != null);
+            return last != null && last < 0;
+          });
+        } else if (state.chartFilter === "top3") {
+          const sample = data.samples[state.index];
+          const concepts = sample?.concepts || [];
+          const top3In = concepts.filter((c) => c.mainFundDiff > 0).slice(0, 3).map((c) => c.code);
+          const top3Out = concepts.filter((c) => c.mainFundDiff < 0).slice(0, 3).map((c) => c.code);
+          const top3Codes = new Set([...top3In, ...top3Out]);
+          visibleSeries = visibleSeries.filter((item) => top3Codes.has(item.code));
+        }
         const featured = featuredSeries(data);
         const concentrationData = visiblePlaybackData(concentrationSeriesData(data.samples));
         const concentrationRange = concentrationAxisRange(concentrationData);
@@ -2302,6 +2345,15 @@ function renderHtml() {
         });
       });
 
+
+      const filterButtons = Array.from(document.querySelectorAll(".chart-filter-btn"));
+      filterButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.chartFilter = btn.dataset.filter;
+          filterButtons.forEach((b) => b.classList.toggle("is-active", b.dataset.filter === state.chartFilter));
+          if (state.data) renderChart(state.data);
+        });
+      });
 
       fetchDay().then(() => {
         fetchStatus();

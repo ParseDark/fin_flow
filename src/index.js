@@ -2109,21 +2109,19 @@ function renderHtml() {
       function featuredSeries(data) {
         const sample = data.samples?.[state.index];
         const concepts = sample?.concepts || [];
-        const topThree = concepts.slice(0, 3);
-        const bottomThree = concepts.slice(-3);
+        const inflow = concepts.filter((item) => item.mainFundDiff > 0).sort((a, b) => b.mainFundDiff - a.mainFundDiff);
+        const outflow = concepts.filter((item) => item.mainFundDiff < 0).sort((a, b) => a.mainFundDiff - b.mainFundDiff);
         const symbols = ["circle", "triangle", "square"];
 
         return {
-          top: topThree
-            .map((item, index) => ({
-              ...item,
-              symbol: symbols[index] || "circle",
-            })),
-          bottom: bottomThree
-            .map((item, index) => ({
-              ...item,
-              symbol: symbols[index] || "circle",
-            })),
+          top: inflow.slice(0, 3).map((item, index) => ({
+            ...item,
+            symbol: symbols[index] || "circle",
+          })),
+          bottom: outflow.slice(0, 3).map((item, index) => ({
+            ...item,
+            symbol: symbols[index] || "circle",
+          })),
         };
       }
 

@@ -1628,16 +1628,17 @@ function renderHtml() {
           ? sample.concepts
           : [...sample.leaders, ...sample.laggards];
         const all = concepts.slice(0, 20);
-        const totalAbs = all.reduce((sum, item) => sum + Math.abs(item.mainFundDiff || 0), 0);
-
         const inflow = all.filter((item) => item.mainFundDiff > 0).sort((a, b) => b.mainFundDiff - a.mainFundDiff);
         const outflow = all.filter((item) => item.mainFundDiff < 0).sort((a, b) => a.mainFundDiff - b.mainFundDiff);
 
-        const inflowTop3Abs = inflow.slice(0, 3).reduce((sum, item) => sum + Math.abs(item.mainFundDiff || 0), 0);
+        const inflowTop3Abs = inflow.slice(0, 3).reduce((sum, item) => sum + item.mainFundDiff, 0);
         const outflowTop3Abs = outflow.slice(0, 3).reduce((sum, item) => sum + Math.abs(item.mainFundDiff || 0), 0);
 
-        const inflowShare = totalAbs > 0 ? inflowTop3Abs / totalAbs : 0;
-        const outflowShare = totalAbs > 0 ? outflowTop3Abs / totalAbs : 0;
+        const inflowTotal = inflow.reduce((sum, item) => sum + item.mainFundDiff, 0);
+        const outflowTotal = outflow.reduce((sum, item) => sum + Math.abs(item.mainFundDiff || 0), 0);
+
+        const inflowShare = inflowTotal > 0 ? inflowTop3Abs / inflowTotal : 0;
+        const outflowShare = outflowTotal > 0 ? outflowTop3Abs / outflowTotal : 0;
 
         function concentrationLabel(share) {
           if (share > 0.45) return "高集中";
@@ -1648,7 +1649,6 @@ function renderHtml() {
         return {
           inflowTop3Abs,
           outflowTop3Abs,
-          totalAbs,
           inflowShare,
           outflowShare,
           inflowLabel: concentrationLabel(inflowShare),

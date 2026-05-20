@@ -173,11 +173,19 @@ export class CapitalFlowCollector extends DurableObject {
     if (emotionRes && emotionRes.ok) {
       const emoJson = await emotionRes.json();
       const emoData = emoJson?.data || {};
-      const bal = emoData.shsz_balance || "";
-      const balNum = bal ? parseFloat(bal.replace(/[^\d.]/g, "")) * (bal.includes("万") ? 1 : bal.includes("亿") ? 10000 : 1) : 0;
+      const parseBal = (s) => s ? parseFloat(s.replace(/[^\d.]/g, "")) * (s.includes("万") ? 1 : s.includes("亿") ? 10000 : 1) : 0;
+      const balNum = parseBal(emoData.shsz_balance || "");
+      const chg = emoData.shsz_balance_change_px || "";
+      const chgNum = chg ? parseFloat(chg.replace(/[^\d.-]/g, "")) * (chg.includes("万") ? 1 : chg.includes("亿") ? 10000 : 1) : 0;
       emotion = {
         degree: parseFloat(emoData.market_degree) || 0,
         balance: balNum,
+        balanceChange: chgNum,
+        previewBalance: parseBal(emoData.preview_balance || ""),
+        previewChangeStr: emoData.preview_balance_change_px || "",
+        balanceStr: emoData.shsz_balance || "",
+        balanceChangeStr: chg,
+        previewBalanceStr: emoData.preview_balance || "",
         upRatio: parseFloat(emoData.up_ratio) || 0,
         performance: parseFloat(emoData.performance) || 0,
         upOpenRatio: parseFloat(emoData.up_open_ratio) || 0,
@@ -186,8 +194,6 @@ export class CapitalFlowCollector extends DurableObject {
         fallNum: emoData.up_down_dis?.fall_num ?? 0,
         upNum: emoData.up_down_dis?.up_num ?? 0,
         downNum: emoData.up_down_dis?.down_num ?? 0,
-        previewBalance: emoData.preview_balance || "",
-        balanceStr: emoData.shsz_balance || "",
       };
     }
 
@@ -260,6 +266,7 @@ export class CapitalFlowCollector extends DurableObject {
       emotionSeries: {
         degree: samples.map((s) => (s.emotion || {}).degree || null),
         balance: samples.map((s) => (s.emotion || {}).balance || null),
+        previewBalance: samples.map((s) => (s.emotion || {}).previewBalance || null),
       },
     };
   }
@@ -1533,7 +1540,7 @@ function renderHtml() {
           </header>
           <section>
             <div class="metric-value" id="emotion-degree">--</div>
-            <p class="metric-sub">两市成交 <span id="emotion-balance">--</span></p>
+            <p class="metric-sub">成交 <span id="emotion-balance">--</span> <span id="emotion-balchg">--</span> · 预估 <span id="emotion-preview">--</span></p>
           </section>
         </article>
         <article class="card metric">
@@ -2044,7 +2051,8 @@ function renderHtml() {
             backgroundColor: "rgba(9,9,11,0.96)",
             borderColor: "rgba(244,244,245,0.08)",
             style: { color: "#fafafa", fontSize: "11px" },
-            formatter() { return "<b>" + this.x + "</b><br/>净资金: " + formatFund(this.y); },
+            useHTML: true,
+            formatter() { return '<div style="font-size:12px;font-weight:600;margin-bottom:4px;">' + this.x + '</div><div style="display:flex;justify-content:space-between;gap:12px;font-size:11px;"><span>净资金</span><span style="font-weight:500;">' + formatFund(this.y) + '</span></div>'; },
           },
           plotOptions: {
             column: {
@@ -2098,10 +2106,19 @@ function renderHtml() {
           }],
           tooltip: {
             shared: true,
+            useHTML: true,
             backgroundColor: "rgba(9,9,11,0.96)",
             borderColor: "rgba(244,244,245,0.08)",
             style: { color: "#fafafa", fontSize: "11px" },
-            formatter() { return "<b>" + this.x + "</b><br/>" + this.points.map((p) => p.series.name + ": " + (p.series.options.id === "emo-balance" ? formatFund(p.y) : p.y)).join("<br/>"); },
+            formatter() {
+              return '<div style="font-size:12px;font-weight:600;margin-bottom:4px;">' + this.x + '</div>' +
+                this.points.map((p) =>
+                  '<div style="display:flex;justify-content:space-between;gap:12px;font-size:11px;line-height:1.4;">' +
+                  '<span>' + p.series.name + '</span>' +
+                  '<span style="font-weight:500;">' + (p.series.options.id === "emo-balance" ? formatFund(p.y) : p.y) + '</span>' +
+                  '</div>'
+                ).join("");
+            },
           },
           plotOptions: {
             series: { animation: { duration: 200 }, marker: { enabled: false } },
@@ -2110,6 +2127,8 @@ function renderHtml() {
             id: "emo-degree", type: "spline", name: "市场温度", yAxis: 0, color: "#f59e0b", lineWidth: 2, zIndex: 2, data: [],
           }, {
             id: "emo-balance", type: "area", name: "成交量", yAxis: 1, color: "rgba(59,130,246,0.2)", lineColor: "rgba(59,130,246,0.6)", lineWidth: 1.5, fillOpacity: 0.15, zIndex: 1, data: [],
+          }, {
+            id: "emo-preview", type: "spline", name: "预估成交量", yAxis: 1, color: "rgba(59,130,246,0.5)", lineWidth: 1.2, dashStyle: "Dash", zIndex: 0, data: [],
           }],
         });
         return emotionChart;
@@ -2553,8 +2572,10 @@ function renderHtml() {
         emoChart.xAxis[0].setCategories(data.sampleTimes, false);
         const degreeSeries = emoChart.series.find((s) => s.options.id === "emo-degree");
         const balanceSeries = emoChart.series.find((s) => s.options.id === "emo-balance");
+        const previewSeries = emoChart.series.find((s) => s.options.id === "emo-preview");
         degreeSeries.setData(visiblePlaybackData(emoData.degree), false);
         balanceSeries.setData(visiblePlaybackData(emoData.balance), false);
+        previewSeries.setData(visiblePlaybackData(emoData.previewBalance || []), false);
         emoChart.redraw();
         emoChart.xAxis[0].removePlotLine("emo-playhead");
         emoChart.xAxis[0].addPlotLine({ id: "emo-playhead", value: state.index, color: "#ffd36b", width: 1.5, zIndex: 5 });
@@ -2671,7 +2692,12 @@ function renderHtml() {
       function renderEmotion(data) {
         const emo = data.emotion || {};
         document.getElementById("emotion-degree").textContent = "温度 " + (emo.marketDegree || "--");
-        document.getElementById("emotion-balance").textContent = emo.shszBalance || "--";
+        document.getElementById("emotion-balance").textContent = emo.balanceStr || "--";
+        const chgEl = document.getElementById("emotion-balchg");
+        const chg = emo.balanceChange || 0;
+        chgEl.textContent = (chg >= 0 ? "+" : "") + formatFund(chg);
+        chgEl.className = chg >= 0 ? "up" : "down";
+        document.getElementById("emotion-preview").textContent = emo.previewBalanceStr || "--";
         document.getElementById("emotion-updown").textContent = (emo.riseNum || "--") + " / " + (emo.fallNum || "--");
         document.getElementById("emotion-ratio").textContent = emo.upRatio || "--";
         document.getElementById("emotion-perf").textContent = emo.performance || "--";

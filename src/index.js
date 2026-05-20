@@ -148,13 +148,22 @@ export class CapitalFlowCollector extends DurableObject {
 
     const json = await conceptRes.json();
     const list = json?.data?.plate_data || [];
-    const groups = buildFlowGroups(list);
 
     let reverseList = [];
     if (reverseRes && reverseRes.ok) {
       const revJson = await reverseRes.json();
       reverseList = revJson?.data?.plate_data || [];
     }
+
+    // Merge both API results (rever=1 and rever=0), deduplicate by code
+    const merged = new Map();
+    for (const item of [...list, ...reverseList]) {
+      if (!merged.has(item.secu_code)) {
+        merged.set(item.secu_code, item);
+      }
+    }
+    const allPlates = [...merged.values()];
+    const groups = buildFlowGroups(allPlates);
     const reverseGroups = buildFlowGroups(reverseList);
 
     const latestSnapshot = {

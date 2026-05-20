@@ -1138,8 +1138,26 @@ function renderHtml() {
 
       .concepts-grid {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 12px;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 16px;
+      }
+
+      .concepts-grid.has-two-columns {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .concept-column {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .concept-column-title {
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--line-soft);
       }
 
       .concept-item {
@@ -1430,8 +1448,8 @@ function renderHtml() {
       <section class="panel concepts-panel">
         <div class="concepts-head">
           <div>
-            <div class="chart-title" style="font-size:24px;">20 个概念当前切片</div>
-            <div class="chart-note">按主力资金绝对值排序展示 20 个概念。即使当天几乎全是净流入，页面也会稳定保持 20 张卡片。</div>
+            <div class="chart-title" style="font-size:24px;">概念板块资金流</div>
+            <div class="chart-note">左列为净流入概念，右列为净流出概念。可通过上方筛选器自由选择关注的板块。</div>
           </div>
           <div class="metric-sub">Top 20 Concepts</div>
         </div>
@@ -1782,6 +1800,8 @@ function renderHtml() {
           '<div class="concept-quick-actions">' +
             '<button type="button" class="btn-outline size-sm concept-quick-btn" data-action="top3">🔥 关注前三</button>' +
             '<button type="button" class="btn-outline size-sm concept-quick-btn" data-action="all">全部</button>' +
+            '<button type="button" class="btn-outline size-sm concept-quick-btn" data-action="inflow">📈 只看净流入</button>' +
+            '<button type="button" class="btn-outline size-sm concept-quick-btn" data-action="outflow">📉 只看净流出</button>' +
             '<button type="button" class="btn-outline size-sm concept-quick-btn" data-action="none">清除</button>' +
           '</div>',
           ...concepts.map((item) => {
@@ -1806,8 +1826,12 @@ function renderHtml() {
               state.conceptFilters = codes.slice(0, 3);
             } else if (action === "all") {
               state.conceptFilters = [];
+            } else if (action === "inflow") {
+              state.conceptFilters = concepts.filter((item) => item.mainFundDiff > 0).map((item) => item.code);
+            } else if (action === "outflow") {
+              state.conceptFilters = concepts.filter((item) => item.mainFundDiff < 0).map((item) => item.code);
             } else if (action === "none") {
-              state.conceptFilters = codes.slice(0, 1);
+              state.conceptFilters = [];
             }
             syncUrl();
             renderConceptOptions(state.data);
@@ -2349,29 +2373,50 @@ function renderHtml() {
         const concepts = sample.concepts && sample.concepts.length
           ? sample.concepts
           : [...sample.leaders, ...sample.laggards];
-        const filteredConcepts = state.conceptFilters.length > 0
+        const filtered = state.conceptFilters.length > 0
           ? concepts.filter((item) => state.conceptFilters.includes(item.code))
           : concepts;
-        document.getElementById("concepts-grid").innerHTML = filteredConcepts.map((item, index) => {
-          const flowClass = item.mainFundDiff >= 0 ? "flow-in" : "flow-out";
-          const valueClass = item.mainFundDiff >= 0 ? "up" : "down";
-          const changeClass = item.change >= 0 ? "up" : "down";
-          const sideLabel = item.mainFundDiff >= 0 ? "净流入" : "净流出";
-          return '<article class="card concept-item group/item ' + flowClass + '" data-tooltip="' + item.name + ' · ' + sideLabel + '" data-side="top">' +
-            '<header class="concept-top">' +
-              '<div><div class="concept-rank">#' + String(index + 1).padStart(2, "0") + '</div><h2 class="concept-name">' + item.name + '</h2></div>' +
-              '<span class="' + (item.mainFundDiff >= 0 ? "up" : "down") + '" style="font-weight:600;font-size:12px;">' + sideLabel + '</span>' +
-            '</header>' +
-            '<section>' +
-              '<div class="concept-flow ' + valueClass + '">' + formatFund(item.mainFundDiff) + '</div>' +
-              '<div class="' + changeClass + '">涨跌幅 ' + formatPercent(item.change) + '</div>' +
-            '</section>' +
-            '<footer class="concept-foot">' +
-              '<p class="muted">代表股 ' + item.leaderStock + '</p>' +
+        const inflow = filtered.filter((item) => item.mainFundDiff >= 0);
+        const outflow = filtered.filter((item) => item.mainFundDiff < 0);
 
-            '</footer>' +
-          '</article>';
-        }).join("");
+        function renderColumn(items, label, colorClass) {
+          if (items.length === 0) {
+            return '<div class="concept-column">' +
+              '<h3 class="concept-column-title ' + colorClass + '">' + label + ' (' + items.length + ')</h3>' +
+              '<p class="muted" style="padding:20px 0;text-align:center;">暂无数据</p>' +
+            '</div>';
+          }
+          let idx = 0;
+          return '<div class="concept-column">' +
+            '<h3 class="concept-column-title ' + colorClass + '">' + label + ' (' + items.length + ')</h3>' +
+            items.map((item) => {
+              idx += 1;
+              const flowClass = item.mainFundDiff >= 0 ? "flow-in" : "flow-out";
+              const valueClass = item.mainFundDiff >= 0 ? "up" : "down";
+              const changeClass = item.change >= 0 ? "up" : "down";
+              const sideLabel = item.mainFundDiff >= 0 ? "净流入" : "净流出";
+              return '<article class="card concept-item group/item ' + flowClass + '" data-tooltip="' + item.name + ' · ' + sideLabel + '" data-side="top">' +
+                '<header class="concept-top">' +
+                  '<div><div class="concept-rank">#' + String(idx).padStart(2, "0") + '</div><h2 class="concept-name">' + item.name + '</h2></div>' +
+                  '<span class="' + valueClass + '" style="font-weight:600;font-size:12px;">' + sideLabel + '</span>' +
+                '</header>' +
+                '<section>' +
+                  '<div class="concept-flow ' + valueClass + '">' + formatFund(item.mainFundDiff) + '</div>' +
+                  '<div class="' + changeClass + '">涨跌幅 ' + formatPercent(item.change) + '</div>' +
+                '</section>' +
+                '<footer class="concept-foot">' +
+                  '<p class="muted">代表股 ' + item.leaderStock + '</p>' +
+                '</footer>' +
+              '</article>';
+            }).join("") +
+          '</div>';
+        }
+
+        document.getElementById("concepts-grid").innerHTML =
+          renderColumn(inflow, "📈 净流入", "up") +
+          renderColumn(outflow, "📉 净流出", "down");
+
+        document.getElementById("concepts-grid").classList.toggle("has-two-columns", inflow.length > 0 && outflow.length > 0);
       }
 
       function renderMetrics(sample) {

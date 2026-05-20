@@ -841,10 +841,50 @@ function renderHtml() {
 
       #chart {
         height: 520px;
-        border: 1px solid var(--line-soft);
+        border: 1px solid rgba(24, 24, 27, 0.14);
         border-radius: 20px;
-        background: linear-gradient(180deg, rgba(15, 23, 42, 0.025), rgba(15, 23, 42, 0.01));
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+        background:
+          linear-gradient(180deg, rgba(24, 24, 27, 0.96), rgba(39, 39, 42, 0.94)),
+          radial-gradient(circle at top, rgba(255,255,255,0.04), transparent 38%);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.04),
+          0 8px 30px rgba(0, 0, 0, 0.08);
+      }
+
+      .dark #chart {
+        border-color: rgba(244, 244, 245, 0.08);
+        background:
+          linear-gradient(180deg, rgba(9, 9, 11, 0.98), rgba(24, 24, 27, 0.96)),
+          radial-gradient(circle at top, rgba(255,255,255,0.05), transparent 38%);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.03),
+          0 8px 30px rgba(0, 0, 0, 0.2);
+      }
+
+      #chart .highcharts-point.top-marker {
+        animation: pulse-marker 1.15s ease-in-out infinite;
+        transform-origin: center;
+        transform-box: fill-box;
+      }
+
+      #chart .highcharts-point.bottom-marker {
+        opacity: 0.68;
+      }
+
+      #chart .highcharts-series.trail-series path {
+        filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.16));
+        opacity: 0.95;
+      }
+
+      @keyframes pulse-marker {
+        0%, 100% {
+          opacity: 1;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 0.58;
+          transform: scale(1.28);
+        }
       }
 
       .chart-head {
@@ -864,6 +904,66 @@ function renderHtml() {
         color: var(--muted);
         font-size: 13px;
         max-width: 540px;
+      }
+
+      .chart-stats {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin-top: 10px;
+      }
+
+      .speed-group {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .speed-btn.is-active {
+        border-color: var(--accent);
+        background: rgba(63, 63, 70, 0.08);
+      }
+
+      .featured-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .featured-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border: 1px solid var(--line-soft);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.04);
+        font-size: 12px;
+      }
+
+      .featured-shape {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+      }
+
+      .shape-circle {
+        border-radius: 999px;
+      }
+
+      .shape-square {
+        border-radius: 2px;
+      }
+
+      .shape-triangle {
+        width: 0;
+        height: 0;
+        border-left: 6px solid transparent;
+        border-right: 6px solid transparent;
+        border-bottom: 10px solid currentColor;
       }
 
       .scrubber {
@@ -950,8 +1050,10 @@ function renderHtml() {
       }
 
       .concept-foot {
-        display: grid;
-        gap: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
       }
 
       .concept-chip {
@@ -968,6 +1070,17 @@ function renderHtml() {
 
       .concept-code {
         width: fit-content;
+        border: 1px solid var(--line-soft);
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 11px;
+        line-height: 1;
+        color: var(--muted);
+        background: rgba(15, 23, 42, 0.03);
+      }
+
+      .dark .concept-code {
+        background: rgba(244, 244, 245, 0.04);
       }
 
       .muted { color: var(--muted); }
@@ -1104,11 +1217,8 @@ function renderHtml() {
           <div id="current-time" class="metric-value" style="font-size:24px;">--:--:--</div>
         </div>
         <div class="control-field">
-          <span class="control-label">回放控制</span>
-          <div class="flex gap-2">
-            <button id="play-btn" class="btn" type="button">播放日内轨迹</button>
-            <button id="latest-btn" class="btn-secondary" type="button">最新交易日</button>
-          </div>
+          <span class="control-label">最新交易日</span>
+          <button id="latest-btn" class="btn-secondary" type="button">跳到最新</button>
         </div>
       </section>
 
@@ -1153,13 +1263,13 @@ function renderHtml() {
         <article class="card metric">
           <header class="metric-row">
             <div>
-              <h2 class="metric-label">前三主力规模</h2>
+              <h2 class="metric-label">Top3 规模</h2>
               <p class="sr-only">当前切片统计</p>
             </div>
             <span class="badge-outline">Top 3</span>
           </header>
           <section>
-            <div class="metric-value" id="top-three-flow">--</div>
+            <div class="metric-value" id="top-three-flow-card">--</div>
             <p class="metric-sub">按当前时间切片计算</p>
           </section>
         </article>
@@ -1170,8 +1280,18 @@ function renderHtml() {
           <div>
             <div class="chart-title">日内资金曲线</div>
             <div class="chart-note">把主力净流入前 10 和净流出前 10 的概念全部叠到同一张时间轴。光标所在位置，就是你当前查看的市场切片。</div>
+            <div class="chart-stats">
+              <span class="badge-outline" id="top-three-flow">Top3 规模 --</span>
+              <span class="badge" id="top-three-share" data-tooltip="当前时间切片下，Top3 主力资金绝对值之和占 Top20 主力资金绝对值总和的比例。" data-side="bottom">前三占比 --</span>
+              <span class="badge-secondary" id="concentration-badge" data-tooltip="用于判断资金是否抱团。高集中表示头部概念吸走了更大比例的资金。" data-side="bottom">集中度 --</span>
+            </div>
+            <div class="featured-legend" id="featured-legend"></div>
           </div>
-          <div class="metric-sub">Highcharts / Replay</div>
+          <div class="speed-group">
+            <button id="play-btn" class="btn" type="button">播放日内轨迹</button>
+            <button class="btn-secondary speed-btn" data-speed="10" type="button">10x</button>
+            <button class="btn-secondary speed-btn" data-speed="20" type="button">20x</button>
+          </div>
         </div>
         <div id="chart"></div>
         <div class="scrubber">
@@ -1198,8 +1318,21 @@ function renderHtml() {
     <script src="https://code.highcharts.com/12/highcharts.js"></script>
     <script>
       const REFRESH_MS = 10000;
-      const PLAY_INTERVAL_MS = 250;
-      const COLORS = ["#6ff0cf", "#74b9ff", "#ffd36f", "#ff83b7", "#ff8398", "#c7a6ff", "#7ee787", "#ffa657"];
+      const BASE_PLAY_INTERVAL_MS = 100;
+      const COLORS = [
+        "#38bdf8",
+        "#22c55e",
+        "#f59e0b",
+        "#a78bfa",
+        "#f97316",
+        "#14b8a6",
+        "#8b5cf6",
+        "#84cc16",
+        "#0ea5e9",
+        "#eab308",
+        "#10b981",
+        "#c084fc",
+      ];
 
       const state = {
         data: null,
@@ -1207,6 +1340,8 @@ function renderHtml() {
         playing: false,
         timer: null,
         conceptFilter: "",
+        colorMap: {},
+        playbackSpeed: 10,
       };
 
       const dateCombobox = document.getElementById("date-combobox");
@@ -1218,6 +1353,7 @@ function renderHtml() {
       const playBtn = document.getElementById("play-btn");
       const latestBtn = document.getElementById("latest-btn");
       const timeline = document.getElementById("timeline");
+      const speedButtons = Array.from(document.querySelectorAll(".speed-btn"));
       let chart;
 
       function formatFund(value) {
@@ -1229,6 +1365,46 @@ function renderHtml() {
 
       function formatPercent(value) {
         return (value * 100).toFixed(2) + "%";
+      }
+
+      function concentrationMeta(sample) {
+        const concepts = sample.concepts && sample.concepts.length
+          ? sample.concepts
+          : [...sample.leaders, ...sample.laggards];
+        const topTwenty = concepts.slice(0, 20);
+        const totalAbs = topTwenty.reduce((sum, item) => sum + Math.abs(item.mainFundDiff || 0), 0);
+        const topThreeAbs = topTwenty.slice(0, 3).reduce((sum, item) => sum + Math.abs(item.mainFundDiff || 0), 0);
+        const share = totalAbs > 0 ? topThreeAbs / totalAbs : 0;
+
+        let label = "分散";
+        if (share > 0.45) label = "高集中";
+        else if (share >= 0.3) label = "中等集中";
+
+        return {
+          topThreeAbs,
+          totalAbs,
+          share,
+          label,
+        };
+      }
+
+      function concentrationSeriesData(samples) {
+        return samples.map((sample) => concentrationMeta(sample).share * 100);
+      }
+
+      function concentrationAxisRange(values) {
+        const visible = values.filter((value) => Number.isFinite(value));
+        if (visible.length === 0) {
+          return { min: 0, max: 100 };
+        }
+
+        const min = Math.min(...visible);
+        const max = Math.max(...visible);
+        const pad = Math.max(2, (max - min) * 0.35 || 4);
+        return {
+          min: Math.max(0, Math.floor((min - pad) * 10) / 10),
+          max: Math.min(100, Math.ceil((max + pad) * 10) / 10),
+        };
       }
 
       function formatSessionLabel(session) {
@@ -1253,10 +1429,15 @@ function renderHtml() {
         }).format(date);
       }
 
+      function buildColorMap(data) {
+        const order = data.chart.series.map((item) => item.code);
+        state.colorMap = Object.fromEntries(
+          order.map((code, index) => [code, COLORS[index % COLORS.length]]),
+        );
+      }
+
       function colorForCode(code) {
-        let hash = 0;
-        for (let i = 0; i < code.length; i += 1) hash = (hash * 31 + code.charCodeAt(i)) >>> 0;
-        return COLORS[hash % COLORS.length];
+        return state.colorMap[code] || COLORS[0];
       }
 
       function setComboboxValue(value) {
@@ -1309,6 +1490,12 @@ function renderHtml() {
         timeline.style.setProperty("--slider-value", percent + "%");
       }
 
+      function updateSpeedButtons() {
+        speedButtons.forEach((button) => {
+          button.classList.toggle("is-active", Number(button.dataset.speed) === state.playbackSpeed);
+        });
+      }
+
       async function fetchStatus() {
         const response = await fetch("/api/status", { cache: "no-store" });
         if (!response.ok) return;
@@ -1337,7 +1524,7 @@ function renderHtml() {
             return;
           }
           setIndex(state.index + 1);
-        }, PLAY_INTERVAL_MS);
+        }, Math.max(8, Math.floor(BASE_PLAY_INTERVAL_MS / state.playbackSpeed)));
       }
 
       function togglePlayback() {
@@ -1356,7 +1543,7 @@ function renderHtml() {
         chart = Highcharts.chart("chart", {
           chart: {
             backgroundColor: "transparent",
-            plotBackgroundColor: "transparent",
+            plotBackgroundColor: "rgba(9, 9, 11, 0.18)",
             animation: false,
             spacing: [12, 8, 8, 8],
           },
@@ -1369,26 +1556,50 @@ function renderHtml() {
           xAxis: {
             categories: [],
             tickLength: 0,
-            lineColor: "rgba(255,255,255,0.14)",
+            lineColor: "rgba(244,244,245,0.14)",
+            gridLineWidth: 1,
+            gridLineColor: "rgba(244,244,245,0.05)",
             labels: {
-              step: 6,
-              style: { color: "rgba(237,246,255,0.54)" },
+              formatter() {
+                const label = String(this.value || "");
+                const index = this.pos;
+                const total = this.axis.categories.length - 1;
+                const parts = label.split(":");
+                const hh = parts[0];
+                const mm = parts[1];
+                if (index === 0 || index === total) return hh + ":" + mm;
+                if (mm === "00" || mm === "30") return hh + ":" + mm;
+                return "";
+              },
+              style: { color: "rgba(244,244,245,0.62)" },
             },
           },
-          yAxis: {
-            title: { text: null },
-            gridLineColor: "rgba(255,255,255,0.08)",
-            labels: {
-              style: { color: "rgba(237,246,255,0.54)" },
-              formatter() { return formatFund(this.value); },
+          yAxis: [
+            {
+              title: { text: null },
+              gridLineWidth: 1,
+              gridLineColor: "rgba(244,244,245,0.08)",
+              labels: {
+                style: { color: "rgba(244,244,245,0.62)" },
+                formatter() { return formatFund(this.value); },
+              },
+              plotLines: [{ id: "zero-line", value: 0, color: "rgba(250,250,250,0.24)", width: 1.2, zIndex: 4 }],
             },
-            plotLines: [{ id: "zero-line", value: 0, color: "rgba(255,255,255,0.16)", width: 1 }],
-          },
+            {
+              title: { text: null },
+              opposite: true,
+              gridLineWidth: 0,
+              labels: {
+                style: { color: "rgba(244,244,245,0.52)" },
+                formatter() { return this.value + "%"; },
+              },
+            },
+          ],
           tooltip: {
             shared: true,
-            backgroundColor: "rgba(9,18,31,0.94)",
-            borderColor: "rgba(255,255,255,0.08)",
-            style: { color: "#edf6ff" },
+            backgroundColor: "rgba(9,9,11,0.96)",
+            borderColor: "rgba(244,244,245,0.08)",
+            style: { color: "#fafafa" },
             formatter() {
               return "<b>" + this.x + "</b><br />" + this.points.map((point) =>
                 '<span style="color:' + point.color + '">●</span> ' + point.series.name + ': ' + formatFund(point.y)
@@ -1414,12 +1625,81 @@ function renderHtml() {
         return chart;
       }
 
+      function visiblePlaybackData(dataPoints) {
+        return dataPoints.map((value, index) => (index <= state.index ? value : null));
+      }
+
+      function trailPlaybackData(dataPoints, windowSize = 5) {
+        const start = Math.max(0, state.index - windowSize + 1);
+        return dataPoints.map((value, index) => (
+          index >= start && index <= state.index ? value : null
+        ));
+      }
+
+      function featuredSeries(data) {
+        const sample = data.samples?.[state.index];
+        const concepts = sample?.concepts || [];
+        const topThree = concepts.slice(0, 3);
+        const bottomThree = concepts.slice(-3);
+        const symbols = ["circle", "triangle", "square"];
+
+        return {
+          top: topThree
+            .filter((item) => !state.conceptFilter || item.code === state.conceptFilter)
+            .map((item, index) => ({
+              ...item,
+              symbol: symbols[index] || "circle",
+            })),
+          bottom: bottomThree
+            .filter((item) => !state.conceptFilter || item.code === state.conceptFilter)
+            .map((item, index) => ({
+              ...item,
+              symbol: symbols[index] || "circle",
+            })),
+        };
+      }
+
+      function renderFeaturedLegend(data) {
+        const featured = featuredSeries(data);
+        const items = [
+          ...featured.top.map((item, index) => ({
+            ...item,
+            rankLabel: "Top " + (index + 1),
+            tone: "up",
+          })),
+          ...featured.bottom.map((item, index) => ({
+            ...item,
+            rankLabel: "Bottom " + (index + 1),
+            tone: "down",
+          })),
+        ];
+
+        document.getElementById("featured-legend").innerHTML = items.map((item) => {
+          const shapeClass = item.symbol === "triangle"
+            ? "shape-triangle"
+            : item.symbol === "square"
+              ? "shape-square"
+              : "shape-circle";
+          const color = colorForCode(item.code);
+          return '<div class="featured-item">' +
+            '<span class="featured-shape ' + shapeClass + '" style="color:' + color + ';background:' + (item.symbol === "triangle" ? "transparent" : color) + '"></span>' +
+            '<span class="' + item.tone + '">' + item.rankLabel + '</span>' +
+            '<span>' + item.name + '</span>' +
+          '</div>';
+        }).join("");
+      }
+
       function renderChart(data) {
         const currentChart = ensureChart();
         currentChart.xAxis[0].setCategories(data.sampleTimes, false);
         const visibleSeries = state.conceptFilter
           ? data.chart.series.filter((item) => item.code === state.conceptFilter)
           : data.chart.series;
+        const featured = featuredSeries(data);
+        const concentrationData = visiblePlaybackData(concentrationSeriesData(data.samples));
+        const concentrationRange = concentrationAxisRange(concentrationData);
+
+        currentChart.yAxis[1].setExtremes(concentrationRange.min, concentrationRange.max, false, false);
 
         visibleSeries.forEach((item) => {
           const existing = currentChart.series.find((series) => series.options.id === item.code);
@@ -1434,23 +1714,189 @@ function renderHtml() {
               { value: 0, color: "#ff8398" },
               { color },
             ],
-            data: item.data,
+            data: visiblePlaybackData(item.data),
           };
 
           if (existing) {
             existing.update({ name: item.name, color, zones: options.zones }, false);
-            existing.setData(item.data, false, { duration: 350 });
+            existing.setData(options.data, false, { duration: 300 });
           } else {
-            currentChart.addSeries(options, false, { duration: 350 });
+            currentChart.addSeries(options, false, { duration: 300 });
+          }
+        });
+
+        const concentrationExisting = currentChart.series.find((series) => series.options.id === "concentration-series");
+        const concentrationMarkerExisting = currentChart.series.find((series) => series.options.id === "concentration-marker");
+        const concentrationSeries = {
+          id: "concentration-series",
+          type: "spline",
+          name: "资金集中度",
+          yAxis: 1,
+          color: "#f59e0b",
+          lineWidth: 2.8,
+          dashStyle: "ShortDash",
+          enableMouseTracking: true,
+          marker: {
+            enabled: false,
+          },
+          data: concentrationData,
+          zIndex: 5,
+        };
+        const concentrationPoint = concentrationData[state.index];
+        const concentrationMarkerSeries = {
+          id: "concentration-marker",
+          type: "scatter",
+          name: "资金集中度 marker",
+          yAxis: 1,
+          showInLegend: false,
+          enableMouseTracking: false,
+          zIndex: 8,
+          data: concentrationPoint == null ? [] : [{
+            x: state.index,
+            y: concentrationPoint,
+            className: "top-marker",
+          }],
+          marker: {
+            enabled: true,
+            symbol: "diamond",
+            radius: 6,
+            lineWidth: 2,
+            lineColor: "rgba(255,255,255,0.85)",
+            fillColor: "#f59e0b",
+          },
+        };
+
+        if (concentrationExisting) {
+          concentrationExisting.setData(concentrationSeries.data, false, { duration: 260 });
+        } else {
+          currentChart.addSeries(concentrationSeries, false, { duration: 260 });
+        }
+
+        if (concentrationMarkerExisting) {
+          concentrationMarkerExisting.update({ marker: concentrationMarkerSeries.marker }, false);
+          concentrationMarkerExisting.setData(concentrationMarkerSeries.data, false, { duration: 220 });
+        } else {
+          currentChart.addSeries(concentrationMarkerSeries, false, { duration: 220 });
+        }
+
+        featured.top.forEach((item) => {
+          const baseSeries = visibleSeries.find((series) => series.code === item.code);
+          if (!baseSeries) return;
+
+          const markerId = "marker-" + item.code;
+          const trailId = "trail-" + item.code;
+          const existing = currentChart.series.find((series) => series.options.id === markerId);
+          const trailExisting = currentChart.series.find((series) => series.options.id === trailId);
+          const markerColor = colorForCode(item.code);
+          const visibleData = visiblePlaybackData(baseSeries.data);
+          const trailData = trailPlaybackData(baseSeries.data, 6);
+          const pointValue = visibleData[state.index];
+          const markerSeries = {
+            id: markerId,
+            type: "scatter",
+            name: item.name + " marker",
+            linkedTo: item.code,
+            enableMouseTracking: false,
+            showInLegend: false,
+            zIndex: 7,
+            data: pointValue == null ? [] : [{
+              x: state.index,
+              y: pointValue,
+              className: "top-marker",
+            }],
+            marker: {
+              enabled: true,
+              symbol: item.symbol,
+              radius: 7,
+              lineWidth: 2,
+              lineColor: "rgba(255,255,255,0.85)",
+              fillColor: markerColor,
+            },
+          };
+          const trailSeries = {
+            id: trailId,
+            type: "spline",
+            name: item.name + " trail",
+            linkedTo: item.code,
+            enableMouseTracking: false,
+            showInLegend: false,
+            zIndex: 6,
+            className: "trail-series",
+            color: markerColor,
+            lineWidth: 4,
+            opacity: 0.35,
+            data: trailData,
+          };
+
+          if (existing) {
+            existing.update({ marker: markerSeries.marker }, false);
+            existing.setData(markerSeries.data, false, { duration: 240 });
+          } else {
+            currentChart.addSeries(markerSeries, false, { duration: 240 });
+          }
+
+          if (trailExisting) {
+            trailExisting.setData(trailSeries.data, false, { duration: 240 });
+          } else {
+            currentChart.addSeries(trailSeries, false, { duration: 240 });
+          }
+        });
+
+        featured.bottom.forEach((item) => {
+          const baseSeries = visibleSeries.find((series) => series.code === item.code);
+          if (!baseSeries) return;
+
+          const markerId = "marker-bottom-" + item.code;
+          const existing = currentChart.series.find((series) => series.options.id === markerId);
+          const markerColor = colorForCode(item.code);
+          const visibleData = visiblePlaybackData(baseSeries.data);
+          const pointValue = visibleData[state.index];
+          const markerSeries = {
+            id: markerId,
+            type: "scatter",
+            name: item.name + " bottom marker",
+            linkedTo: item.code,
+            enableMouseTracking: false,
+            showInLegend: false,
+            zIndex: 6,
+            data: pointValue == null ? [] : [{
+              x: state.index,
+              y: pointValue,
+              className: "bottom-marker",
+            }],
+            marker: {
+              enabled: true,
+              symbol: item.symbol,
+              radius: 4.5,
+              lineWidth: 1,
+              lineColor: "rgba(255,255,255,0.4)",
+              fillColor: markerColor,
+            },
+          };
+
+          if (existing) {
+            existing.update({ marker: markerSeries.marker }, false);
+            existing.setData(markerSeries.data, false, { duration: 220 });
+          } else {
+            currentChart.addSeries(markerSeries, false, { duration: 220 });
           }
         });
 
         currentChart.series
-          .filter((series) => !visibleSeries.some((item) => item.code === series.options.id))
+          .filter((series) => {
+            const isPrimary = visibleSeries.some((item) => item.code === series.options.id);
+            const isConcentration = series.options.id === "concentration-series";
+            const isTopMarker = featured.top.some((item) => ("marker-" + item.code) === series.options.id);
+            const isTrail = featured.top.some((item) => ("trail-" + item.code) === series.options.id);
+            const isBottomMarker = featured.bottom.some((item) => ("marker-bottom-" + item.code) === series.options.id);
+            const isConcentrationMarker = series.options.id === "concentration-marker";
+            return !isPrimary && !isConcentration && !isConcentrationMarker && !isTopMarker && !isTrail && !isBottomMarker;
+          })
           .forEach((series) => series.remove(false));
 
         currentChart.redraw();
         drawCursor();
+        renderFeaturedLegend(data);
       }
 
       function drawCursor() {
@@ -1501,13 +1947,14 @@ function renderHtml() {
             '</section>' +
             '<footer class="concept-foot">' +
               '<p class="muted">代表股 ' + item.leaderStock + '</p>' +
-              '<kbd class="kbd concept-code">' + item.code + '</kbd>' +
+              '<span class="concept-code">' + item.code + '</span>' +
             '</footer>' +
           '</article>';
         }).join("");
       }
 
       function renderMetrics(sample) {
+        const concentration = concentrationMeta(sample);
         document.getElementById("current-time").textContent = state.data.sampleTimes[state.index] || "--:--:--";
         document.getElementById("updated-at").textContent = new Intl.DateTimeFormat("zh-CN", {
           hour: "2-digit",
@@ -1518,7 +1965,10 @@ function renderHtml() {
         document.getElementById("selected-date").textContent = state.data.requestedDate;
         document.getElementById("positive-count").textContent = sample.headline.topCount;
         document.getElementById("positive-sub").textContent = "总概念数 " + sample.headline.totalCount;
-        document.getElementById("top-three-flow").textContent = formatFund(sample.headline.topThreeFlow);
+        document.getElementById("top-three-flow").textContent = "Top3 规模 " + formatFund(concentration.topThreeAbs);
+        document.getElementById("top-three-flow-card").textContent = formatFund(concentration.topThreeAbs);
+        document.getElementById("top-three-share").textContent = "前三占比 " + formatPercent(concentration.share);
+        document.getElementById("concentration-badge").textContent = "集中度 " + concentration.label;
         document.getElementById("sample-progress").textContent = (state.index + 1) + " / " + state.data.samples.length;
       }
 
@@ -1528,9 +1978,9 @@ function renderHtml() {
         timeline.value = String(state.index);
         updateSliderPaint();
         const sample = state.data.samples[state.index];
+        renderChart(state.data);
         renderMetrics(sample);
         renderConceptGrid(sample);
-        drawCursor();
       }
 
       async function fetchDay(date) {
@@ -1541,6 +1991,7 @@ function renderHtml() {
         }
 
         const data = await response.json();
+        buildColorMap(data);
         state.data = data;
         state.index = data.initialIndex;
 
@@ -1592,9 +2043,20 @@ function renderHtml() {
         setIndex(Number(timeline.value));
         updateSliderPaint();
       });
+      speedButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const nextSpeed = Number(button.dataset.speed) || 1;
+          state.playbackSpeed = nextSpeed;
+          updateSpeedButtons();
+          if (state.playing) {
+            startPlayback();
+          }
+        });
+      });
 
       fetchDay().then(() => {
         fetchStatus();
+        updateSpeedButtons();
         updateSliderPaint();
         setInterval(refreshLiveIfNeeded, REFRESH_MS);
         setInterval(fetchStatus, REFRESH_MS);

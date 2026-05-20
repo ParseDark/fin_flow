@@ -1332,14 +1332,27 @@ function renderHtml() {
         <article class="card metric">
           <header class="metric-row">
             <div>
-              <h2 class="metric-label">Top3 规模</h2>
-              <p class="sr-only">当前切片统计</p>
+              <h2 class="metric-label">净流入 Top3</h2>
+              <p class="sr-only">流入主力资金</p>
             </div>
-            <span class="badge-outline">Top 3</span>
+            <span class="badge-outline">📈</span>
           </header>
           <section>
-            <div class="metric-value" id="top-three-flow-card">--</div>
-            <p class="metric-sub">按当前时间切片计算</p>
+            <div class="metric-value up" id="inflow-top3-card">--</div>
+            <p class="metric-sub">买入端前三规模</p>
+          </section>
+        </article>
+        <article class="card metric">
+          <header class="metric-row">
+            <div>
+              <h2 class="metric-label">净流出 Top3</h2>
+              <p class="sr-only">流出主力资金</p>
+            </div>
+            <span class="badge-outline">📉</span>
+          </header>
+          <section>
+            <div class="metric-value down" id="outflow-top3-card">--</div>
+            <p class="metric-sub">卖出端前三规模</p>
           </section>
         </article>
       </section>
@@ -1350,9 +1363,10 @@ function renderHtml() {
             <div class="chart-title">日内资金曲线</div>
             <div class="chart-note">把主力净流入前 10 和净流出前 10 的概念全部叠到同一张时间轴。光标所在位置，就是你当前查看的市场切片。</div>
             <div class="chart-stats">
-              <span class="badge-outline" id="top-three-flow">Top3 规模 --</span>
-              <span class="badge" id="top-three-share" data-tooltip="当前时间切片下，Top3 主力资金绝对值之和占 Top20 主力资金绝对值总和的比例。" data-side="bottom">前三占比 --</span>
-              <span class="badge-secondary" id="concentration-badge" data-tooltip="用于判断资金是否抱团。高集中表示头部概念吸走了更大比例的资金。" data-side="bottom">集中度 --</span>
+              <span class="badge-outline" id="top-three-flow">流入 Top3 --</span>
+              <span class="badge-outline" id="top-three-outflow">流出 Top3 --</span>
+              <span class="badge" id="top-three-share" data-tooltip="流入 Top3 占 Top20 绝对值总和的比例。" data-side="bottom">流入集中 --</span>
+              <span class="badge-secondary" id="concentration-badge" data-tooltip="流出 Top3 占 Top20 绝对值总和的比例。" data-side="bottom">流出集中 --</span>
             </div>
             <div class="featured-legend" id="featured-legend"></div>
           </div>
@@ -1613,29 +1627,48 @@ function renderHtml() {
         const concepts = sample.concepts && sample.concepts.length
           ? sample.concepts
           : [...sample.leaders, ...sample.laggards];
-        const topTwenty = concepts.slice(0, 20);
-        const totalAbs = topTwenty.reduce((sum, item) => sum + Math.abs(item.mainFundDiff || 0), 0);
-        const topThreeAbs = topTwenty.slice(0, 3).reduce((sum, item) => sum + Math.abs(item.mainFundDiff || 0), 0);
-        const share = totalAbs > 0 ? topThreeAbs / totalAbs : 0;
+        const all = concepts.slice(0, 20);
+        const totalAbs = all.reduce((sum, item) => sum + Math.abs(item.mainFundDiff || 0), 0);
 
-        let label = "分散";
-        if (share > 0.45) label = "高集中";
-        else if (share >= 0.3) label = "中等集中";
+        const inflow = all.filter((item) => item.mainFundDiff > 0).sort((a, b) => b.mainFundDiff - a.mainFundDiff);
+        const outflow = all.filter((item) => item.mainFundDiff < 0).sort((a, b) => a.mainFundDiff - b.mainFundDiff);
+
+        const inflowTop3Abs = inflow.slice(0, 3).reduce((sum, item) => sum + Math.abs(item.mainFundDiff || 0), 0);
+        const outflowTop3Abs = outflow.slice(0, 3).reduce((sum, item) => sum + Math.abs(item.mainFundDiff || 0), 0);
+
+        const inflowShare = totalAbs > 0 ? inflowTop3Abs / totalAbs : 0;
+        const outflowShare = totalAbs > 0 ? outflowTop3Abs / totalAbs : 0;
+
+        function concentrationLabel(share) {
+          if (share > 0.45) return "高集中";
+          if (share >= 0.3) return "中等集中";
+          return "分散";
+        }
 
         return {
-          topThreeAbs,
+          inflowTop3Abs,
+          outflowTop3Abs,
           totalAbs,
-          share,
-          label,
+          inflowShare,
+          outflowShare,
+          inflowLabel: concentrationLabel(inflowShare),
+          outflowLabel: concentrationLabel(outflowShare),
         };
       }
 
       function concentrationSeriesData(samples) {
-        return samples.map((sample) => concentrationMeta(sample).share * 100);
+        return samples.map((sample) => {
+          const meta = concentrationMeta(sample);
+          return {
+            inflow: meta.inflowShare * 100,
+            outflow: meta.outflowShare * 100,
+          };
+        });
       }
 
-      function concentrationAxisRange(values) {
-        const visible = values.filter((value) => Number.isFinite(value));
+      function concentrationAxisRange(seriesData) {
+        const allValues = seriesData.flatMap((d) => [d?.inflow ?? 0, d?.outflow ?? 0]);
+        const visible = allValues.filter((value) => Number.isFinite(value));
         if (visible.length === 0) {
           return { min: 0, max: 100 };
         }
@@ -1954,59 +1987,23 @@ function renderHtml() {
           }
         });
 
-        const concentrationExisting = currentChart.series.find((series) => series.options.id === "concentration-series");
-        const concentrationMarkerExisting = currentChart.series.find((series) => series.options.id === "concentration-marker");
-        const concentrationSeries = {
-          id: "concentration-series",
-          type: "spline",
-          name: "资金集中度",
-          yAxis: 1,
-          color: "#f59e0b",
-          lineWidth: 2.8,
-          dashStyle: "ShortDash",
-          enableMouseTracking: true,
-          marker: {
-            enabled: false,
-          },
-          data: concentrationData,
-          zIndex: 5,
-        };
-        const concentrationPoint = concentrationData[state.index];
-        const concentrationMarkerSeries = {
-          id: "concentration-marker",
-          type: "scatter",
-          name: "资金集中度 marker",
-          yAxis: 1,
-          showInLegend: false,
-          enableMouseTracking: false,
-          zIndex: 8,
-          data: concentrationPoint == null ? [] : [{
-            x: state.index,
-            y: concentrationPoint,
-            className: "top-marker",
-          }],
-          marker: {
-            enabled: true,
-            symbol: "diamond",
-            radius: 6,
-            lineWidth: 2,
-            lineColor: "rgba(255,255,255,0.85)",
-            fillColor: "#f59e0b",
-          },
-        };
-
-        if (concentrationExisting) {
-          concentrationExisting.setData(concentrationSeries.data, false, { duration: 260 });
-        } else {
-          currentChart.addSeries(concentrationSeries, false, { duration: 260 });
-        }
-
-        if (concentrationMarkerExisting) {
-          concentrationMarkerExisting.update({ marker: concentrationMarkerSeries.marker }, false);
-          concentrationMarkerExisting.setData(concentrationMarkerSeries.data, false, { duration: 220 });
-        } else {
-          currentChart.addSeries(concentrationMarkerSeries, false, { duration: 220 });
-        }
+        // Inflow concentration
+        const concInData = concentrationData.map((d) => d?.inflow ?? null);
+        const concInPt = concInData[state.index];
+        [{id:"conc-inflow",name:"流入集中度",color:"#dc2626",dash:"ShortDash",data:concInData},
+         {id:"conc-outflow",name:"流出集中度",color:"#16a34a",dash:"ShortDot",data:concentrationData.map((d) => d?.outflow ?? null)}].forEach((sc) => {
+          const ex = currentChart.series.find((s) => s.options.id === sc.id);
+          const opts = { id:sc.id, type:"spline", name:sc.name, yAxis:1, color:sc.color, lineWidth:2.4, dashStyle:sc.dash, enableMouseTracking:true, marker:{enabled:false}, data:sc.data, zIndex:5 };
+          if (ex) { ex.setData(sc.data, false, { duration: 260 }); }
+          else { currentChart.addSeries(opts, false, { duration: 260 }); }
+        });
+        [{id:"conc-inflow-marker",y:concInPt,symbol:"diamond",color:"#dc2626"},
+         {id:"conc-outflow-marker",y:concentrationData[state.index]?.outflow ?? null,symbol:"triangle",color:"#16a34a"}].forEach((sc) => {
+          const ex = currentChart.series.find((s) => s.options.id === sc.id);
+          const opts = { id:sc.id, type:"scatter", name:sc.id, yAxis:1, showInLegend:false, enableMouseTracking:false, zIndex:8, data:sc.y==null?[]:[{x:state.index,y:sc.y,className:"top-marker"}], marker:{enabled:true,symbol:sc.symbol,radius:5,lineWidth:2,lineColor:"rgba(255,255,255,0.85)",fillColor:sc.color} };
+          if (ex) { ex.update({marker:opts.marker},false); ex.setData(opts.data,false,{duration:220}); }
+          else { currentChart.addSeries(opts,false,{duration:220}); }
+        });
 
         featured.top.forEach((item) => {
           const baseSeries = visibleSeries.find((series) => series.code === item.code);
@@ -2114,11 +2111,11 @@ function renderHtml() {
         currentChart.series
           .filter((series) => {
             const isPrimary = visibleSeries.some((item) => item.code === series.options.id);
-            const isConcentration = series.options.id === "concentration-series";
+            const isConcentration = series.options.id === "conc-inflow" || series.options.id === "conc-outflow";
             const isTopMarker = featured.top.some((item) => ("marker-" + item.code) === series.options.id);
             const isTrail = featured.top.some((item) => ("trail-" + item.code) === series.options.id);
             const isBottomMarker = featured.bottom.some((item) => ("marker-bottom-" + item.code) === series.options.id);
-            const isConcentrationMarker = series.options.id === "concentration-marker";
+            const isConcentrationMarker = series.options.id === "conc-inflow-marker" || series.options.id === "conc-outflow-marker";
             return !isPrimary && !isConcentration && !isConcentrationMarker && !isTopMarker && !isTrail && !isBottomMarker;
           })
           .forEach((series) => series.remove(false));
@@ -2215,10 +2212,12 @@ function renderHtml() {
         document.getElementById("selected-date").textContent = state.data.requestedDate;
         document.getElementById("positive-count").textContent = sample.headline.topCount;
         document.getElementById("positive-sub").textContent = "总概念数 " + sample.headline.totalCount;
-        document.getElementById("top-three-flow").textContent = "Top3 规模 " + formatFund(concentration.topThreeAbs);
-        document.getElementById("top-three-flow-card").textContent = formatFund(concentration.topThreeAbs);
-        document.getElementById("top-three-share").textContent = "前三占比 " + formatPercent(concentration.share);
-        document.getElementById("concentration-badge").textContent = "集中度 " + concentration.label;
+        document.getElementById("inflow-top3-card").textContent = formatFund(concentration.inflowTop3Abs);
+        document.getElementById("outflow-top3-card").textContent = formatFund(concentration.outflowTop3Abs);
+        document.getElementById("top-three-flow").textContent = "流入 Top3 " + formatFund(concentration.inflowTop3Abs);
+        document.getElementById("top-three-outflow").textContent = "流出 Top3 " + formatFund(concentration.outflowTop3Abs);
+        document.getElementById("top-three-share").textContent = "流入集中 " + formatPercent(concentration.inflowShare) + " " + concentration.inflowLabel;
+        document.getElementById("concentration-badge").textContent = "流出集中 " + formatPercent(concentration.outflowShare) + " " + concentration.outflowLabel;
         document.getElementById("sample-progress").textContent = (state.index + 1) + " / " + state.data.samples.length;
       }
 

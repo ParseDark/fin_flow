@@ -917,8 +917,55 @@ function renderHtml() {
       }
 
       #chart {
-        height: 580px;
-        border: 1px solid rgba(24, 24, 27, 0.14);
+        height: 540px;
+      }
+
+      .chart-custom-legend {
+        display: flex;
+        gap: 16px;
+        padding: 8px 0 0;
+        flex-wrap: wrap;
+      }
+
+      .chart-legend-col {
+        flex: 1;
+        min-width: 200px;
+      }
+
+      .chart-legend-col h4 {
+        font-size: 11px;
+        font-weight: 600;
+        margin: 0 0 4px;
+      }
+
+      .chart-legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 8px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 11px;
+        transition: opacity 0.15s;
+      }
+
+      .chart-legend-item:hover {
+        background: rgba(63, 63, 70, 0.06);
+      }
+
+      .chart-legend-item.is-hidden {
+        opacity: 0.35;
+      }
+
+      .chart-legend-swatch {
+        display: inline-block;
+        width: 14px;
+        height: 4px;
+        border-radius: 2px;
+        flex-shrink: 0;
+      }
+
+      #chart {
         border-radius: 20px;
         background:
           linear-gradient(180deg, rgba(24, 24, 27, 0.96), rgba(39, 39, 42, 0.94)),
@@ -1441,6 +1488,7 @@ function renderHtml() {
           </div>
         </div>
         <div id="chart"></div>
+        <div class="chart-custom-legend" id="chart-custom-legend"></div>
         <div class="scrubber">
           <div class="scrubber-head">
             <div class="muted">时间进度</div>
@@ -1854,33 +1902,13 @@ function renderHtml() {
             plotBackgroundColor: "rgba(9, 9, 11, 0.18)",
             animation: false,
             spacing: [12, 8, 8, 8],
-            marginBottom: 70,
+            marginBottom: 16,
           },
           title: { text: null },
           credits: { enabled: false },
           exporting: { enabled: false },
           legend: {
-            enabled: true,
-            align: "center",
-            verticalAlign: "bottom",
-            layout: "horizontal",
-            itemStyle: {
-              color: "rgba(244,244,245,0.78)",
-              fontSize: "11px",
-              fontWeight: "400",
-            },
-            itemHoverStyle: {
-              color: "#fafafa",
-            },
-            itemHiddenStyle: {
-              color: "rgba(244,244,245,0.25)",
-            },
-            symbolRadius: 3,
-            symbolWidth: 14,
-            symbolHeight: 4,
-            itemDistance: 14,
-            itemMarginTop: 2,
-            itemMarginBottom: 2,
+            enabled: false,
           },
           xAxis: {
             categories: [],
@@ -2049,6 +2077,54 @@ function renderHtml() {
             '<span>' + item.name + '</span>' +
           '</div>';
         }).join("");
+      }
+
+      function renderCustomLegend(data) {
+        const series = data.chart.series;
+        const inflow = series.filter((item) => {
+          const last = item.data.findLast((v) => v != null);
+          return last != null && last > 0;
+        });
+        const outflow = series.filter((item) => {
+          const last = item.data.findLast((v) => v != null);
+          return last != null && last < 0;
+        });
+
+        function legendItem(item) {
+          const color = colorForCode(item.code);
+          return '<span class="chart-legend-item" data-code="' + item.code + '">' +
+            '<span class="chart-legend-swatch" style="background:' + color + ';"></span>' +
+            '<span>' + item.name + '</span>' +
+          '</span>';
+        }
+
+        const container = document.getElementById("chart-custom-legend");
+        container.innerHTML =
+          '<div class="chart-legend-col">' +
+            '<h4 class="up">📈 净流入</h4>' +
+            inflow.map(legendItem).join("") +
+          '</div>' +
+          '<div class="chart-legend-col">' +
+            '<h4 class="down">📉 净流出</h4>' +
+            outflow.map(legendItem).join("") +
+          '</div>';
+
+        // Click to toggle series visibility
+        container.querySelectorAll(".chart-legend-item").forEach((el) => {
+          el.addEventListener("click", () => {
+            const code = el.dataset.code;
+            const s = chart.series.find((ser) => ser.options.id === code);
+            if (s) {
+              if (s.visible) {
+                s.hide();
+                el.classList.add("is-hidden");
+              } else {
+                s.show();
+                el.classList.remove("is-hidden");
+              }
+            }
+          });
+        });
       }
 
       function renderChart(data) {
@@ -2269,6 +2345,7 @@ function renderHtml() {
         currentChart.redraw();
         drawCursor();
         renderFeaturedLegend(data);
+        renderCustomLegend(data);
       }
 
       function drawCursor() {

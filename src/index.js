@@ -824,6 +824,9 @@ function renderHtml() {
         font-size: 13px;
         color: var(--text);
         transition: background 0.12s;
+        display: flex;
+        align-items: center;
+        gap: 8px;
       }
 
       .select [role="option"]:hover {
@@ -840,6 +843,40 @@ function renderHtml() {
 
       .select [role="option"][hidden] {
         display: none;
+      }
+
+      .checkbox-mark {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        border: 1.5px solid var(--line);
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 700;
+        flex-shrink: 0;
+        color: var(--accent-color, var(--accent));
+      }
+
+      [role="option"][aria-checked="true"] .checkbox-mark {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+
+      .concept-quick-actions {
+        display: flex;
+        gap: 6px;
+        padding: 0 4px 6px;
+        border-bottom: 1px solid var(--line-soft);
+        margin-bottom: 4px;
+        flex-wrap: wrap;
+      }
+
+      .concept-quick-btn {
+        font-size: 11px;
+        padding: 3px 10px;
       }
 
       .btn:hover,
@@ -1408,10 +1445,12 @@ function renderHtml() {
         index: 0,
         playing: false,
         timer: null,
-        conceptFilter: "",
+        conceptFilters: [],
         colorMap: {},
         playbackSpeed: 10,
       };
+
+      readUrlParams();
 
       const dateCombobox = document.getElementById("date-combobox");
       const dateTrigger = document.getElementById("date-combobox-trigger");
@@ -1434,7 +1473,7 @@ function renderHtml() {
       let dateController;
       let conceptController;
 
-      function initCombobox({ trigger, popover, listbox, valueInput, filterInput, onSelect }) {
+      function initCombobox({ trigger, popover, listbox, valueInput, filterInput, onSelect, multi }) {
         let open = false;
         let highlightedIndex = -1;
 
@@ -1465,7 +1504,12 @@ function renderHtml() {
 
         function selectOption(optionEl) {
           const value = optionEl.getAttribute("data-value");
-          const label = optionEl.textContent.trim();
+          if (multi) {
+            // Multi-select: toggle, don't close popover
+            if (onSelect) onSelect(value, null);
+            return;
+          }
+          const label = optionEl.querySelector(".option-label")?.textContent || optionEl.textContent.trim();
           valueInput.value = value;
           const triggerText = trigger.querySelector(".truncate");
           if (triggerText) triggerText.textContent = label;
@@ -1486,9 +1530,14 @@ function renderHtml() {
 
         function filterOptions(query) {
           const lower = query.toLowerCase();
+          const quickActions = listbox.querySelector(".concept-quick-actions");
+          if (quickActions) {
+            quickActions.style.display = lower ? "none" : "";
+          }
           const options = Array.from(listbox.querySelectorAll('[role="option"]'));
           options.forEach((opt) => {
-            const text = opt.textContent.toLowerCase();
+            const labelEl = opt.querySelector(".option-label");
+            const text = (labelEl ? labelEl.textContent : opt.textContent).toLowerCase();
             if (!lower || text.includes(lower)) {
               opt.removeAttribute("hidden");
             } else {
@@ -1599,6 +1648,30 @@ function renderHtml() {
         return (value * 100).toFixed(2) + "%";
       }
 
+      function readUrlParams() {
+        const params = new URLSearchParams(window.location.search);
+        const conceptsRaw = params.get("concepts");
+        if (conceptsRaw) {
+          state.conceptFilters = conceptsRaw.split(",").filter(Boolean);
+        }
+      }
+
+      function syncUrl() {
+        const params = new URLSearchParams(window.location.search);
+        if (state.data?.requestedDate) {
+          params.set("date", state.data.requestedDate);
+        } else {
+          params.delete("date");
+        }
+        if (state.conceptFilters.length > 0) {
+          params.set("concepts", state.conceptFilters.join(","));
+        } else {
+          params.delete("concepts");
+        }
+        const newUrl = window.location.pathname + (params.toString() ? "?" + params.toString() : "");
+        history.replaceState(null, "", newUrl);
+      }
+
       function concentrationMeta(sample) {
         const concepts = sample.concepts && sample.concepts.length
           ? sample.concepts
@@ -1690,16 +1763,60 @@ function renderHtml() {
       function renderConceptOptions(data) {
         const concepts = data.samples[data.initialIndex]?.concepts || data.latestSnapshot?.concepts || [];
         conceptListbox.innerHTML = [
-          '<div role="option" data-value="__all__">全部概念</div>',
-          ...concepts.map((item) => '<div role="option" data-value="' + item.code + '">' + item.name + '</div>'),
+          '<div class="concept-quick-actions">' +
+            '<button type="button" class="btn-outline size-sm concept-quick-btn" data-action="top3">🔥 关注前三</button>' +
+            '<button type="button" class="btn-outline size-sm concept-quick-btn" data-action="all">全部</button>' +
+            '<button type="button" class="btn-outline size-sm concept-quick-btn" data-action="none">清除</button>' +
+          '</div>',
+          ...concepts.map((item) => {
+            const isAll = state.conceptFilters.length === 0;
+            const checked = isAll || state.conceptFilters.includes(item.code);
+            return '<div role="option" data-value="' + item.code + '" aria-checked="' + checked + '">' +
+              '<span class="checkbox-mark">' + (checked ? '✓' : '') + '</span>' +
+              '<span class="option-label">' + item.name + '</span>' +
+            '</div>';
+          }),
         ].join("");
 
-        const active = concepts.some((item) => item.code === state.conceptFilter)
-          ? state.conceptFilter
-          : "";
-        const activeLabel = concepts.find((item) => item.code === active)?.name || "全部概念";
-        state.conceptFilter = active;
-        setConceptComboboxValue(active || "__all__", activeLabel);
+        updateConceptTriggerLabel();
+
+        // Wire up quick action buttons
+        conceptListbox.querySelectorAll(".concept-quick-btn").forEach((btn) => {
+          btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const action = btn.dataset.action;
+            const codes = concepts.map((item) => item.code);
+            if (action === "top3") {
+              state.conceptFilters = codes.slice(0, 3);
+            } else if (action === "all") {
+              state.conceptFilters = [];
+            } else if (action === "none") {
+              state.conceptFilters = codes.slice(0, 1);
+            }
+            syncUrl();
+            renderConceptOptions(state.data);
+            if (state.data) {
+              renderChart(state.data);
+              renderConceptGrid(state.data.samples[state.index]);
+            }
+          });
+        });
+      }
+
+      function updateConceptTriggerLabel() {
+        const concepts = state.data?.samples?.[state.data.initialIndex]?.concepts
+          || state.data?.latestSnapshot?.concepts || [];
+        let label;
+        if (state.conceptFilters.length === 0) {
+          label = "全部概念 (" + concepts.length + ")";
+        } else if (state.conceptFilters.length === 1) {
+          const found = concepts.find((item) => item.code === state.conceptFilters[0]);
+          label = found ? found.name : "1 个概念";
+        } else {
+          label = "已选 " + state.conceptFilters.length + " 个概念";
+        }
+        const triggerText = conceptTrigger.querySelector(".truncate");
+        if (triggerText) triggerText.textContent = label;
       }
 
       function updateSliderPaint() {
@@ -1856,6 +1973,10 @@ function renderHtml() {
         ));
       }
 
+      function conceptMatches(code) {
+        return state.conceptFilters.length === 0 || state.conceptFilters.includes(code);
+      }
+
       function featuredSeries(data) {
         const sample = data.samples?.[state.index];
         const concepts = sample?.concepts || [];
@@ -1865,13 +1986,13 @@ function renderHtml() {
 
         return {
           top: topThree
-            .filter((item) => !state.conceptFilter || item.code === state.conceptFilter)
+            .filter((item) => conceptMatches(item.code))
             .map((item, index) => ({
               ...item,
               symbol: symbols[index] || "circle",
             })),
           bottom: bottomThree
-            .filter((item) => !state.conceptFilter || item.code === state.conceptFilter)
+            .filter((item) => conceptMatches(item.code))
             .map((item, index) => ({
               ...item,
               symbol: symbols[index] || "circle",
@@ -1912,8 +2033,8 @@ function renderHtml() {
       function renderChart(data) {
         const currentChart = ensureChart();
         currentChart.xAxis[0].setCategories(data.sampleTimes, false);
-        const visibleSeries = state.conceptFilter
-          ? data.chart.series.filter((item) => item.code === state.conceptFilter)
+        const visibleSeries = state.conceptFilters.length > 0
+          ? data.chart.series.filter((item) => state.conceptFilters.includes(item.code))
           : data.chart.series;
         const featured = featuredSeries(data);
         const concentrationData = visiblePlaybackData(concentrationSeriesData(data.samples));
@@ -2148,8 +2269,8 @@ function renderHtml() {
         const concepts = sample.concepts && sample.concepts.length
           ? sample.concepts
           : [...sample.leaders, ...sample.laggards];
-        const filteredConcepts = state.conceptFilter
-          ? concepts.filter((item) => item.code === state.conceptFilter)
+        const filteredConcepts = state.conceptFilters.length > 0
+          ? concepts.filter((item) => state.conceptFilters.includes(item.code))
           : concepts;
         document.getElementById("concepts-grid").innerHTML = filteredConcepts.map((item, index) => {
           const flowClass = item.mainFundDiff >= 0 ? "flow-in" : "flow-out";
@@ -2219,6 +2340,7 @@ function renderHtml() {
           renderDateOptions(data.availableDates, data.requestedDate);
         }
         renderConceptOptions(data);
+        syncUrl();
 
         timeline.max = String(Math.max(0, data.samples.length - 1));
         renderChart(data);
@@ -2248,6 +2370,7 @@ function renderHtml() {
         onSelect: async (value) => {
           stopPlayback();
           await fetchDay(value);
+          syncUrl();
         },
       });
 
@@ -2257,11 +2380,30 @@ function renderHtml() {
         listbox: conceptListbox,
         valueInput: conceptValueInput,
         filterInput: conceptFilterInput,
-        onSelect: (value) => {
-          state.conceptFilter = value === "__all__" ? "" : value;
-          const concepts = state.data?.samples[state.index]?.concepts || [];
-          const label = concepts.find((item) => item.code === state.conceptFilter)?.name || "全部概念";
-          setConceptComboboxValue(state.conceptFilter || "__all__", label);
+        multi: true,
+        onSelect: (code) => {
+          if (!code) return;
+          // Toggle the code in filters
+          const idx = state.conceptFilters.indexOf(code);
+          if (idx >= 0) {
+            state.conceptFilters.splice(idx, 1);
+          } else {
+            state.conceptFilters.push(code);
+          }
+          syncUrl();
+          // Update checkbox state and trigger label
+          updateConceptTriggerLabel();
+          const concepts = state.data?.samples[state.data.initialIndex]?.concepts
+            || state.data?.latestSnapshot?.concepts || [];
+          const allCodes = concepts.map((item) => item.code);
+          const allChecked = state.conceptFilters.length === 0 || allCodes.every((c) => state.conceptFilters.includes(c));
+          conceptListbox.querySelectorAll('[role="option"]').forEach((opt) => {
+            const v = opt.getAttribute("data-value");
+            const checked = allChecked || state.conceptFilters.includes(v);
+            opt.setAttribute("aria-checked", String(checked));
+            const mark = opt.querySelector(".checkbox-mark");
+            if (mark) mark.textContent = checked ? "✓" : "";
+          });
           if (state.data) {
             renderChart(state.data);
             renderConceptGrid(state.data.samples[state.index]);

@@ -169,22 +169,25 @@ export class CapitalFlowCollector extends DurableObject {
     const allPlates = [...merged.values()];
     const groups = buildFlowGroups(allPlates);
 
-    let emotion = {};
+    let emotion = null;
     if (emotionRes && emotionRes.ok) {
       const emoJson = await emotionRes.json();
       const emoData = emoJson?.data || {};
+      const bal = emoData.shsz_balance || "";
+      const balNum = bal ? parseFloat(bal.replace(/[^\d.]/g, "")) * (bal.includes("万") ? 1 : bal.includes("亿") ? 10000 : 1) : 0;
       emotion = {
-        marketDegree: emoData.market_degree || "-",
-        shszBalance: emoData.shsz_balance || "-",
-        previewBalance: emoData.preview_balance || "-",
-        upRatio: emoData.up_ratio || "-",
-        performance: emoData.performance || "-",
-        upOpenRatio: emoData.up_open_ratio || "-",
-        profitRatio: emoData.profit_ratio || "-",
-        riseNum: emoData.up_down_dis?.rise_num ?? "-",
-        fallNum: emoData.up_down_dis?.fall_num ?? "-",
-        upNum: emoData.up_down_dis?.up_num ?? "-",
-        downNum: emoData.up_down_dis?.down_num ?? "-",
+        degree: parseFloat(emoData.market_degree) || 0,
+        balance: balNum,
+        upRatio: parseFloat(emoData.up_ratio) || 0,
+        performance: parseFloat(emoData.performance) || 0,
+        upOpenRatio: parseFloat(emoData.up_open_ratio) || 0,
+        profitRatio: parseFloat(emoData.profit_ratio) || 0,
+        riseNum: emoData.up_down_dis?.rise_num ?? 0,
+        fallNum: emoData.up_down_dis?.fall_num ?? 0,
+        upNum: emoData.up_down_dis?.up_num ?? 0,
+        downNum: emoData.up_down_dis?.down_num ?? 0,
+        previewBalance: emoData.preview_balance || "",
+        balanceStr: emoData.shsz_balance || "",
       };
     }
 
@@ -195,7 +198,7 @@ export class CapitalFlowCollector extends DurableObject {
       laggards: groups.laggards,
       concepts: groups.ranking,
       ranking: groups.ranking,
-      emotion,
+      emotion: emotion || {},
     };
 
     const dateKey = getChinaDateKey(new Date(latestSnapshot.updatedAt));
@@ -254,6 +257,10 @@ export class CapitalFlowCollector extends DurableObject {
         }),
       },
       emotion: samples.at(-1).emotion || {},
+      emotionSeries: {
+        degree: samples.map((s) => (s.emotion || {}).degree || null),
+        balance: samples.map((s) => (s.emotion || {}).balance || null),
+      },
     };
   }
 
@@ -1596,6 +1603,7 @@ function renderHtml() {
         <div id="chart"></div>
         <div class="chart-custom-legend" id="chart-custom-legend"></div>
         <div id="netflow-chart" style="height:120px;"></div>
+        <div id="emotion-chart" style="height:160px;"></div>
         <div class="scrubber">
           <div class="scrubber-head">
             <div class="muted">时间进度</div>
@@ -1661,6 +1669,7 @@ function renderHtml() {
       const speedButtons = Array.from(document.querySelectorAll(".speed-btn"));
       let chart;
       let netFlowChart;
+      let emotionChart;
       let dateController;
       function initCombobox({ trigger, popover, listbox, valueInput, filterInput, onSelect }) {
         let open = false;
@@ -2055,6 +2064,54 @@ function renderHtml() {
           }],
         });
         return netFlowChart;
+      }
+
+      function ensureEmotionChart() {
+        if (emotionChart) return emotionChart;
+        emotionChart = Highcharts.chart("emotion-chart", {
+          chart: {
+            backgroundColor: "transparent",
+            animation: false,
+            spacing: [0, 8, 4, 8],
+            height: 160,
+          },
+          title: { text: "市场情绪", align: "left", style: { color: "rgba(244,244,245,0.7)", fontSize: "11px", fontWeight: "400" } },
+          credits: { enabled: false },
+          exporting: { enabled: false },
+          legend: { enabled: false },
+          xAxis: {
+            categories: [],
+            tickLength: 0,
+            lineWidth: 0,
+            labels: { enabled: false },
+          },
+          yAxis: [{
+            title: { text: null },
+            gridLineWidth: 1,
+            gridLineColor: "rgba(244,244,245,0.06)",
+            labels: { style: { color: "rgba(244,244,245,0.5)", fontSize: "10px" } },
+          }, {
+            title: { text: null },
+            opposite: true,
+            gridLineWidth: 0,
+            labels: { style: { color: "rgba(244,244,245,0.4)", fontSize: "10px" }, formatter() { return formatFund(this.value); } },
+          }],
+          tooltip: {
+            backgroundColor: "rgba(9,9,11,0.96)",
+            borderColor: "rgba(244,244,245,0.08)",
+            style: { color: "#fafafa", fontSize: "11px" },
+            formatter() { return "<b>" + this.x + "</b><br/>" + this.points.map((p) => p.series.name + ": " + (p.series.options.id === "emo-balance" ? formatFund(p.y) : p.y)).join("<br/>"); },
+          },
+          plotOptions: {
+            series: { animation: { duration: 200 }, marker: { enabled: false } },
+          },
+          series: [{
+            id: "emo-degree", type: "spline", name: "市场温度", yAxis: 0, color: "#f59e0b", lineWidth: 2, zIndex: 2, data: [],
+          }, {
+            id: "emo-balance", type: "area", name: "成交量", yAxis: 1, color: "rgba(59,130,246,0.2)", lineColor: "rgba(59,130,246,0.6)", lineWidth: 1.5, fillOpacity: 0.15, zIndex: 1, data: [],
+          }],
+        });
+        return emotionChart;
       }
 
       function ensureChart() {
@@ -2488,6 +2545,18 @@ function renderHtml() {
         // Remove inline net flow series from main chart if it exists
         const oldNf = currentChart.series.find((s) => s.options.id === "net-flow-bars");
         if (oldNf) oldNf.remove(false);
+
+        // Emotion chart (temperature + volume, shared xAxis)
+        const emoChart = ensureEmotionChart();
+        const emoData = data.emotionSeries || { degree: [], balance: [] };
+        emoChart.xAxis[0].setCategories(data.sampleTimes, false);
+        const degreeSeries = emoChart.series.find((s) => s.options.id === "emo-degree");
+        const balanceSeries = emoChart.series.find((s) => s.options.id === "emo-balance");
+        degreeSeries.setData(visiblePlaybackData(emoData.degree), false);
+        balanceSeries.setData(visiblePlaybackData(emoData.balance), false);
+        emoChart.redraw();
+        emoChart.xAxis[0].removePlotLine("emo-playhead");
+        emoChart.xAxis[0].addPlotLine({ id: "emo-playhead", value: state.index, color: "#ffd36b", width: 1.5, zIndex: 5 });
 
         currentChart.redraw();
         drawCursor();

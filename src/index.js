@@ -558,8 +558,8 @@ function renderHtml() {
         --line-soft: rgba(39, 39, 42, 0.08);
         --text: #18181b;
         --muted: rgba(39, 39, 42, 0.62);
-        --up: #15803d;
-        --down: #be123c;
+        --up: #dc2626;
+        --down: #16a34a;
         --gold: #a16207;
         --accent: #3f3f46;
         --shadow: 0 8px 30px rgba(0, 0, 0, 0.04);
@@ -575,8 +575,8 @@ function renderHtml() {
         --line-soft: rgba(244, 244, 245, 0.08);
         --text: #fafafa;
         --muted: rgba(244, 244, 245, 0.6);
-        --up: #4ade80;
-        --down: #fb7185;
+        --up: #f87171;
+        --down: #4ade80;
         --gold: #facc15;
         --accent: #e4e4e7;
         --shadow: 0 8px 30px rgba(0, 0, 0, 0.24);
@@ -1094,11 +1094,13 @@ function renderHtml() {
       }
 
       .concept-item.flow-in {
-        box-shadow: inset 0 1px 0 rgba(102, 240, 203, 0.08);
+        border-color: rgba(220, 38, 38, 0.14);
+        background: rgba(220, 38, 38, 0.03);
       }
 
       .concept-item.flow-out {
-        box-shadow: inset 0 1px 0 rgba(255, 125, 151, 0.08);
+        border-color: rgba(22, 163, 74, 0.14);
+        background: rgba(22, 163, 74, 0.03);
       }
 
       .concept-item:hover {
@@ -1350,8 +1352,9 @@ function renderHtml() {
           </div>
           <div class="speed-group">
             <button id="play-btn" class="btn" type="button">播放日内轨迹</button>
-            <button class="btn-secondary speed-btn" data-speed="10" type="button">10x</button>
             <button class="btn-secondary speed-btn" data-speed="20" type="button">20x</button>
+            <button class="btn-secondary speed-btn" data-speed="40" type="button">40x</button>
+            <button class="btn-secondary speed-btn" data-speed="60" type="button">60x</button>
           </div>
         </div>
         <div id="chart"></div>
@@ -1402,7 +1405,7 @@ function renderHtml() {
         timer: null,
         conceptFilters: [],
         colorMap: {},
-        playbackSpeed: 10,
+        playbackSpeed: 40,
       };
 
       readUrlParams();
@@ -2002,7 +2005,7 @@ function renderHtml() {
             color,
             zoneAxis: "y",
             zones: [
-              { value: 0, color: "#ff8398" },
+              { value: 0, color: "#22c55e" },
               { color },
             ],
             data: visiblePlaybackData(item.data),
@@ -2230,7 +2233,7 @@ function renderHtml() {
           return '<article class="card concept-item group/item ' + flowClass + '" data-tooltip="' + item.name + ' · ' + sideLabel + '" data-side="top">' +
             '<header class="concept-top">' +
               '<div><div class="concept-rank">#' + String(index + 1).padStart(2, "0") + '</div><h2 class="concept-name">' + item.name + '</h2></div>' +
-              '<span class="' + (item.mainFundDiff >= 0 ? "badge-secondary" : "badge-destructive") + '">' + sideLabel + '</span>' +
+              '<span class="' + (item.mainFundDiff >= 0 ? "up" : "down") + '" style="font-weight:600;font-size:12px;">' + sideLabel + '</span>' +
             '</header>' +
             '<section>' +
               '<div class="concept-flow ' + valueClass + '">' + formatFund(item.mainFundDiff) + '</div>' +

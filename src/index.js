@@ -1450,6 +1450,45 @@ function renderHtml() {
             <p class="metric-sub">卖出端前三规模</p>
           </section>
         </article>
+        <article class="card metric">
+          <header class="metric-row">
+            <div>
+              <h2 class="metric-label">流入集中</h2>
+              <p class="sr-only">流入前三占比</p>
+            </div>
+            <span class="badge-outline up">📈</span>
+          </header>
+          <section>
+            <div class="metric-value" id="top-three-share">--</div>
+            <p class="metric-sub">占流入总量比例</p>
+          </section>
+        </article>
+        <article class="card metric">
+          <header class="metric-row">
+            <div>
+              <h2 class="metric-label">流出集中</h2>
+              <p class="sr-only">流出前三占比</p>
+            </div>
+            <span class="badge-outline down">📉</span>
+          </header>
+          <section>
+            <div class="metric-value" id="concentration-badge">--</div>
+            <p class="metric-sub">占流出总量比例</p>
+          </section>
+        </article>
+        <article class="card metric">
+          <header class="metric-row">
+            <div>
+              <h2 class="metric-label">市场净资金</h2>
+              <p class="sr-only">整体资金强度</p>
+            </div>
+            <span class="badge-outline">📊</span>
+          </header>
+          <section>
+            <div class="metric-value" id="net-flow-stat">--</div>
+            <p class="metric-sub">净流入 + 净流出总和</p>
+          </section>
+        </article>
       </section>
 
       <section class="panel chart-panel">
@@ -1458,18 +1497,6 @@ function renderHtml() {
             <div class="chart-title">日内资金曲线</div>
             <div class="chart-note">把主力净流入前 10 和净流出前 10 的概念全部叠到同一张时间轴。光标所在位置，就是你当前查看的市场切片。</div>
             <div class="chart-stats">
-              <div class="mini-stat-card">
-                <span class="mini-stat-label up">流入集中</span>
-                <span class="mini-stat-value" id="top-three-share">--</span>
-              </div>
-              <div class="mini-stat-card">
-                <span class="mini-stat-label down">流出集中</span>
-                <span class="mini-stat-value" id="concentration-badge">--</span>
-              </div>
-              <div class="mini-stat-card">
-                <span class="mini-stat-label">市场净资金</span>
-                <span class="mini-stat-value" id="net-flow-stat">--</span>
-              </div>
               <span class="chart-filter-tags">
                 <button class="btn-outline size-sm chart-filter-btn is-active" data-filter="all">全部</button>
                 <button class="btn-outline size-sm chart-filter-btn" data-filter="top3">关注前三</button>
@@ -2444,7 +2471,7 @@ function renderHtml() {
         const netFlow = all.reduce((sum, item) => sum + (item.mainFundDiff || 0), 0);
         const netEl = document.getElementById("net-flow-stat");
         netEl.textContent = formatFund(netFlow);
-        netEl.className = "mini-stat-value " + (netFlow >= 0 ? "up" : "down");
+        netEl.className = "metric-value " + (netFlow >= 0 ? "up" : "down");
         document.getElementById("sample-progress").textContent = (state.index + 1) + " / " + state.data.samples.length;
       }
 

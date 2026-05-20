@@ -758,19 +758,88 @@ function renderHtml() {
         justify-content: space-between;
       }
 
+      .select {
+        position: relative;
+      }
+
       .select [data-popover] {
+        display: none;
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 0;
+        right: 0;
+        z-index: 50;
         background: var(--panel-strong);
         border: 1px solid var(--line);
         border-radius: 18px;
         backdrop-filter: blur(10px);
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+        overflow: hidden;
+        padding: 8px;
+      }
+
+      .select [data-popover][aria-hidden="false"] {
+        display: block;
+      }
+
+      .select [data-popover] header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 6px 8px;
+        border-bottom: 1px solid var(--line-soft);
+        margin-bottom: 4px;
+      }
+
+      .select [data-popover] header input {
+        flex: 1;
+        background: transparent;
+        border: none;
+        outline: none;
+        color: var(--text);
+        font-size: 13px;
+      }
+
+      .select [data-popover] header input::placeholder {
+        color: var(--muted);
+      }
+
+      .select [data-popover] header svg {
+        flex-shrink: 0;
+        color: var(--muted);
+      }
+
+      .select [role="listbox"] {
+        max-height: 260px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
       }
 
       .select [role="option"] {
+        padding: 8px 12px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-size: 13px;
         color: var(--text);
+        transition: background 0.12s;
+      }
+
+      .select [role="option"]:hover {
+        background: rgba(63, 63, 70, 0.06);
       }
 
       .select [role="option"][data-selected] {
         background: rgba(63, 63, 70, 0.1);
+      }
+
+      .select [role="option"][data-highlighted] {
+        background: rgba(63, 63, 70, 0.08);
+      }
+
+      .select [role="option"][hidden] {
+        display: none;
       }
 
       .btn:hover,
@@ -1345,16 +1414,179 @@ function renderHtml() {
       };
 
       const dateCombobox = document.getElementById("date-combobox");
+      const dateTrigger = document.getElementById("date-combobox-trigger");
+      const datePopover = document.getElementById("date-combobox-popover");
       const dateListbox = document.getElementById("date-combobox-listbox");
       const dateValueInput = document.getElementById("date-combobox-value");
+      const dateFilterInput = datePopover ? datePopover.querySelector("input") : null;
+
       const conceptCombobox = document.getElementById("concept-combobox");
+      const conceptTrigger = document.getElementById("concept-combobox-trigger");
+      const conceptPopover = document.getElementById("concept-combobox-popover");
       const conceptListbox = document.getElementById("concept-combobox-listbox");
       const conceptValueInput = document.getElementById("concept-combobox-value");
+      const conceptFilterInput = conceptPopover ? conceptPopover.querySelector("input") : null;
       const playBtn = document.getElementById("play-btn");
       const latestBtn = document.getElementById("latest-btn");
       const timeline = document.getElementById("timeline");
       const speedButtons = Array.from(document.querySelectorAll(".speed-btn"));
       let chart;
+      let dateController;
+      let conceptController;
+
+      function initCombobox({ trigger, popover, listbox, valueInput, filterInput, onSelect }) {
+        let open = false;
+        let highlightedIndex = -1;
+
+        function getVisibleOptions() {
+          return Array.from(listbox.querySelectorAll('[role="option"]:not([hidden])'));
+        }
+
+        function openPopover() {
+          open = true;
+          popover.setAttribute("aria-hidden", "false");
+          trigger.setAttribute("aria-expanded", "true");
+          highlightedIndex = -1;
+          updateHighlight();
+          if (filterInput) {
+            filterInput.value = "";
+            filterOptions("");
+            setTimeout(() => filterInput.focus(), 50);
+          }
+        }
+
+        function closePopover() {
+          open = false;
+          popover.setAttribute("aria-hidden", "true");
+          trigger.setAttribute("aria-expanded", "false");
+          highlightedIndex = -1;
+          updateHighlight();
+        }
+
+        function selectOption(optionEl) {
+          const value = optionEl.getAttribute("data-value");
+          const label = optionEl.textContent.trim();
+          valueInput.value = value;
+          const triggerText = trigger.querySelector(".truncate");
+          if (triggerText) triggerText.textContent = label;
+          closePopover();
+          if (onSelect) onSelect(value, label);
+        }
+
+        function updateHighlight() {
+          const options = getVisibleOptions();
+          options.forEach((opt, i) => {
+            if (i === highlightedIndex) {
+              opt.setAttribute("data-highlighted", "");
+            } else {
+              opt.removeAttribute("data-highlighted");
+            }
+          });
+        }
+
+        function filterOptions(query) {
+          const lower = query.toLowerCase();
+          const options = Array.from(listbox.querySelectorAll('[role="option"]'));
+          options.forEach((opt) => {
+            const text = opt.textContent.toLowerCase();
+            if (!lower || text.includes(lower)) {
+              opt.removeAttribute("hidden");
+            } else {
+              opt.setAttribute("hidden", "");
+            }
+          });
+          highlightedIndex = -1;
+          updateHighlight();
+        }
+
+        function focusOption(direction) {
+          const options = getVisibleOptions();
+          if (options.length === 0) return;
+          if (direction === "next") {
+            highlightedIndex = (highlightedIndex + 1) % options.length;
+          } else if (direction === "prev") {
+            highlightedIndex = highlightedIndex <= 0 ? options.length - 1 : highlightedIndex - 1;
+          } else if (direction === "first") {
+            highlightedIndex = 0;
+          } else if (direction === "last") {
+            highlightedIndex = options.length - 1;
+          }
+          updateHighlight();
+          const opt = options[highlightedIndex];
+          if (opt) opt.scrollIntoView({ block: "nearest" });
+        }
+
+        trigger.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (open) {
+            closePopover();
+          } else {
+            openPopover();
+          }
+        });
+
+        listbox.addEventListener("click", (e) => {
+          const option = e.target.closest('[role="option"]');
+          if (!option) return;
+          selectOption(option);
+        });
+
+        if (filterInput) {
+          filterInput.addEventListener("input", () => {
+            filterOptions(filterInput.value);
+          });
+
+          filterInput.addEventListener("keydown", (e) => {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              focusOption("next");
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              focusOption("prev");
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              const options = getVisibleOptions();
+              if (highlightedIndex >= 0 && highlightedIndex < options.length) {
+                selectOption(options[highlightedIndex]);
+              } else if (options.length > 0) {
+                selectOption(options[0]);
+              }
+            } else if (e.key === "Escape") {
+              closePopover();
+              trigger.focus();
+            }
+          });
+
+          filterInput.addEventListener("blur", () => {
+            setTimeout(() => {
+              if (open && !popover.contains(document.activeElement)) {
+                closePopover();
+              }
+            }, 150);
+          });
+        }
+
+        document.addEventListener("click", (e) => {
+          if (open && !trigger.contains(e.target) && !popover.contains(e.target)) {
+            closePopover();
+          }
+        });
+
+        return {
+          open: () => openPopover(),
+          close: () => closePopover(),
+          selectByValue(value) {
+            if (!value) return;
+            const option = listbox.querySelector('[role="option"][data-value="' + CSS.escape(value) + '"]');
+            if (option) {
+              const label = option.textContent.trim();
+              const triggerText = trigger.querySelector(".truncate");
+              if (triggerText) triggerText.textContent = label;
+              valueInput.value = value;
+            }
+          },
+        };
+      }
 
       function formatFund(value) {
         const abs = Math.abs(value);
@@ -1441,23 +1673,11 @@ function renderHtml() {
       }
 
       function setComboboxValue(value) {
-        if (!dateCombobox) return;
-        dateValueInput.value = value || "";
-        const triggerText = document.querySelector("#date-combobox-trigger .truncate");
-        if (triggerText) triggerText.textContent = value || "选择交易日";
-        if (typeof dateCombobox.selectByValue === "function" && value) {
-          dateCombobox.selectByValue(value);
-        }
+        if (dateController) dateController.selectByValue(value);
       }
 
       function setConceptComboboxValue(value, label) {
-        if (!conceptCombobox) return;
-        conceptValueInput.value = value || "";
-        const triggerText = document.querySelector("#concept-combobox-trigger .truncate");
-        if (triggerText) triggerText.textContent = label || "全部概念";
-        if (typeof conceptCombobox.selectByValue === "function") {
-          conceptCombobox.selectByValue(value || "__all__");
-        }
+        if (conceptController) conceptController.selectByValue(value || "__all__");
       }
 
       function renderDateOptions(availableDates, selectedDate) {
@@ -2019,24 +2239,40 @@ function renderHtml() {
         }
       }
 
+      dateController = initCombobox({
+        trigger: dateTrigger,
+        popover: datePopover,
+        listbox: dateListbox,
+        valueInput: dateValueInput,
+        filterInput: dateFilterInput,
+        onSelect: async (value) => {
+          stopPlayback();
+          await fetchDay(value);
+        },
+      });
+
+      conceptController = initCombobox({
+        trigger: conceptTrigger,
+        popover: conceptPopover,
+        listbox: conceptListbox,
+        valueInput: conceptValueInput,
+        filterInput: conceptFilterInput,
+        onSelect: (value) => {
+          state.conceptFilter = value === "__all__" ? "" : value;
+          const concepts = state.data?.samples[state.index]?.concepts || [];
+          const label = concepts.find((item) => item.code === state.conceptFilter)?.name || "全部概念";
+          setConceptComboboxValue(state.conceptFilter || "__all__", label);
+          if (state.data) {
+            renderChart(state.data);
+            renderConceptGrid(state.data.samples[state.index]);
+          }
+        },
+      });
+
       playBtn.addEventListener("click", togglePlayback);
       latestBtn.addEventListener("click", async () => {
         stopPlayback();
         await fetchDay();
-      });
-      dateCombobox.addEventListener("change", async (event) => {
-        stopPlayback();
-        await fetchDay(event.detail.value);
-      });
-      conceptCombobox.addEventListener("change", (event) => {
-        state.conceptFilter = event.detail.value === "__all__" ? "" : event.detail.value;
-        const concepts = state.data?.samples[state.index]?.concepts || [];
-        const label = concepts.find((item) => item.code === state.conceptFilter)?.name || "全部概念";
-        setConceptComboboxValue(state.conceptFilter || "__all__", label);
-        if (state.data) {
-          renderChart(state.data);
-          renderConceptGrid(state.data.samples[state.index]);
-        }
       });
       timeline.addEventListener("input", () => {
         stopPlayback();

@@ -991,6 +991,34 @@ function renderHtml() {
         margin-top: 10px;
       }
 
+      .mini-stat-card {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 6px 12px;
+        border: 1px solid var(--line-soft);
+        border-radius: 10px;
+        background: rgba(15, 23, 42, 0.03);
+        min-width: 80px;
+      }
+
+      .dark .mini-stat-card {
+        background: rgba(244, 244, 245, 0.04);
+      }
+
+      .mini-stat-label {
+        font-size: 10px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .mini-stat-value {
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+      }
+
       .speed-group {
         display: inline-flex;
         align-items: center;
@@ -1383,10 +1411,18 @@ function renderHtml() {
             <div class="chart-title">日内资金曲线</div>
             <div class="chart-note">把主力净流入前 10 和净流出前 10 的概念全部叠到同一张时间轴。光标所在位置，就是你当前查看的市场切片。</div>
             <div class="chart-stats">
-              <span class="badge-outline" id="top-three-flow">流入 Top3 --</span>
-              <span class="badge-outline" id="top-three-outflow">流出 Top3 --</span>
-              <span class="badge" id="top-three-share" data-tooltip="流入 Top3 占流入总值的比例" data-side="bottom">流入集中 --</span>
-              <span class="badge-secondary" id="concentration-badge" data-tooltip="流出 Top3 占流出总值的比例" data-side="bottom">流出集中 --</span>
+              <div class="mini-stat-card">
+                <span class="mini-stat-label up">流入集中</span>
+                <span class="mini-stat-value" id="top-three-share">--</span>
+              </div>
+              <div class="mini-stat-card">
+                <span class="mini-stat-label down">流出集中</span>
+                <span class="mini-stat-value" id="concentration-badge">--</span>
+              </div>
+              <div class="mini-stat-card">
+                <span class="mini-stat-label">市场净资金</span>
+                <span class="mini-stat-value" id="net-flow-stat">--</span>
+              </div>
               <span class="chart-filter-tags">
                 <button class="btn-outline size-sm chart-filter-btn is-active" data-filter="all">全部</button>
                 <button class="btn-outline size-sm chart-filter-btn" data-filter="top3">关注前三</button>
@@ -2295,10 +2331,14 @@ function renderHtml() {
         document.getElementById("positive-sub").textContent = "总概念数 " + sample.headline.totalCount;
         document.getElementById("inflow-top3-card").textContent = formatFund(concentration.inflowTop3Abs);
         document.getElementById("outflow-top3-card").textContent = formatFund(concentration.outflowTop3Abs);
-        document.getElementById("top-three-flow").textContent = "流入 Top3 " + formatFund(concentration.inflowTop3Abs);
-        document.getElementById("top-three-outflow").textContent = "流出 Top3 " + formatFund(concentration.outflowTop3Abs);
-        document.getElementById("top-three-share").textContent = "流入集中 " + formatPercent(concentration.inflowShare) + " " + concentration.inflowLabel;
-        document.getElementById("concentration-badge").textContent = "流出集中 " + formatPercent(concentration.outflowShare) + " " + concentration.outflowLabel;
+        document.getElementById("top-three-share").textContent = formatPercent(concentration.inflowShare) + " " + concentration.inflowLabel;
+        document.getElementById("concentration-badge").textContent = formatPercent(concentration.outflowShare) + " " + concentration.outflowLabel;
+        // Net flow
+        const all = [...sample.leaders, ...sample.laggards];
+        const netFlow = all.reduce((sum, item) => sum + (item.mainFundDiff || 0), 0);
+        const netEl = document.getElementById("net-flow-stat");
+        netEl.textContent = formatFund(netFlow);
+        netEl.className = "mini-stat-value " + (netFlow >= 0 ? "up" : "down");
         document.getElementById("sample-progress").textContent = (state.index + 1) + " / " + state.data.samples.length;
       }
 

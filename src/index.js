@@ -6,6 +6,9 @@ const API_URL =
 const REVERSE_API_URL =
   "https://x-quote.cls.cn/web_quote/plate/plate_list?app=CailianpressWeb&os=web&page=1&rever=0&sv=8.4.6&type=concept&way=main_fund_diff&sign=4bb3a71eb50aaeff3c50f908503cda5a";
 
+const EMOTION_API_URL =
+  "https://x-quote.cls.cn/v2/quote/a/stock/emotion?app=CailianpressWeb&os=web&sv=7.7.5&sign=bf0f367462d8cd70917ba5eab3853bce";
+
 const REQUEST_HEADERS = {
   "Cache-Control": "no-cache",
   "Content-Type": "application/x-www-form-urlencoded",
@@ -137,9 +140,10 @@ export class CapitalFlowCollector extends DurableObject {
   }
 
   async collectOnce() {
-    const [conceptRes, reverseRes] = await Promise.all([
+    const [conceptRes, reverseRes, emotionRes] = await Promise.all([
       fetch(API_URL, { headers: REQUEST_HEADERS }),
       fetch(REVERSE_API_URL, { headers: REQUEST_HEADERS }).catch(() => null),
+      fetch(EMOTION_API_URL, { headers: REQUEST_HEADERS }).catch(() => null),
     ]);
 
     if (!conceptRes.ok) {
@@ -165,6 +169,25 @@ export class CapitalFlowCollector extends DurableObject {
     const allPlates = [...merged.values()];
     const groups = buildFlowGroups(allPlates);
 
+    let emotion = {};
+    if (emotionRes && emotionRes.ok) {
+      const emoJson = await emotionRes.json();
+      const emoData = emoJson?.data || {};
+      emotion = {
+        marketDegree: emoData.market_degree || "-",
+        shszBalance: emoData.shsz_balance || "-",
+        previewBalance: emoData.preview_balance || "-",
+        upRatio: emoData.up_ratio || "-",
+        performance: emoData.performance || "-",
+        upOpenRatio: emoData.up_open_ratio || "-",
+        profitRatio: emoData.profit_ratio || "-",
+        riseNum: emoData.up_down_dis?.rise_num ?? "-",
+        fallNum: emoData.up_down_dis?.fall_num ?? "-",
+        upNum: emoData.up_down_dis?.up_num ?? "-",
+        downNum: emoData.up_down_dis?.down_num ?? "-",
+      };
+    }
+
     const latestSnapshot = {
       updatedAt: new Date().toISOString(),
       headline: summarizeHeadline(list),
@@ -172,6 +195,7 @@ export class CapitalFlowCollector extends DurableObject {
       laggards: groups.laggards,
       concepts: groups.ranking,
       ranking: groups.ranking,
+      emotion,
     };
 
     const dateKey = getChinaDateKey(new Date(latestSnapshot.updatedAt));
@@ -229,6 +253,7 @@ export class CapitalFlowCollector extends DurableObject {
           return all.reduce((sum, item) => sum + (item.mainFundDiff || 0), 0);
         }),
       },
+      emotion: samples.at(-1).emotion || {},
     };
   }
 
@@ -355,6 +380,7 @@ function compactSample(snapshot) {
     leaders: snapshot.leaders.map(compactItem),
     laggards: snapshot.laggards.map(compactItem),
     concepts: snapshot.concepts.map(compactItem),
+    em: snapshot.emotion || {},
   };
 }
 
@@ -375,6 +401,7 @@ function expandSample(sample) {
     leaders: sample.leaders.map(expandItem),
     laggards: sample.laggards.map(expandItem),
     concepts: (sample.concepts || []).map(expandItem),
+    emotion: sample.em || {},
   };
 }
 
@@ -1489,6 +1516,58 @@ function renderHtml() {
             <p class="metric-sub">净流入 + 净流出总和</p>
           </section>
         </article>
+        <article class="card metric">
+          <header class="metric-row">
+            <div>
+              <h2 class="metric-label">市场温度</h2>
+              <p class="sr-only">市场情绪</p>
+            </div>
+            <span class="badge-outline">🌡️</span>
+          </header>
+          <section>
+            <div class="metric-value" id="emotion-degree">--</div>
+            <p class="metric-sub">两市成交 <span id="emotion-balance">--</span></p>
+          </section>
+        </article>
+        <article class="card metric">
+          <header class="metric-row">
+            <div>
+              <h2 class="metric-label">涨停板</h2>
+              <p class="sr-only">市场强度</p>
+            </div>
+            <span class="badge-outline">📋</span>
+          </header>
+          <section>
+            <div class="metric-value" id="emotion-updown">--</div>
+            <p class="metric-sub">封板率 <span id="emotion-ratio">--</span></p>
+          </section>
+        </article>
+        <article class="card metric">
+          <header class="metric-row">
+            <div>
+              <h2 class="metric-label">昨日涨停表现</h2>
+              <p class="sr-only">溢价</p>
+            </div>
+            <span class="badge-outline">📊</span>
+          </header>
+          <section>
+            <div class="metric-value" id="emotion-perf">--</div>
+            <p class="metric-sub">高开 <span id="emotion-open">--</span> · 盈利 <span id="emotion-profit">--</span></p>
+          </section>
+        </article>
+        <article class="card metric">
+          <header class="metric-row">
+            <div>
+              <h2 class="metric-label">上涨 / 下跌</h2>
+              <p class="sr-only">涨跌家数</p>
+            </div>
+            <span class="badge-outline">📈📉</span>
+          </header>
+          <section>
+            <div class="metric-value" id="emotion-risefall">--</div>
+            <p class="metric-sub">涨停 <span id="emotion-up">--</span> · 跌停 <span id="emotion-down">--</span></p>
+          </section>
+        </article>
       </section>
 
       <section class="panel chart-panel">
@@ -2516,6 +2595,21 @@ function renderHtml() {
         netEl.textContent = formatFund(netFlow);
         netEl.className = "metric-value " + (netFlow >= 0 ? "up" : "down");
         document.getElementById("sample-progress").textContent = (state.index + 1) + " / " + state.data.samples.length;
+        renderEmotion(state.data);
+      }
+
+      function renderEmotion(data) {
+        const emo = data.emotion || {};
+        document.getElementById("emotion-degree").textContent = "温度 " + (emo.marketDegree || "--");
+        document.getElementById("emotion-balance").textContent = emo.shszBalance || "--";
+        document.getElementById("emotion-updown").textContent = (emo.riseNum || "--") + " / " + (emo.fallNum || "--");
+        document.getElementById("emotion-ratio").textContent = emo.upRatio || "--";
+        document.getElementById("emotion-perf").textContent = emo.performance || "--";
+        document.getElementById("emotion-open").textContent = emo.upOpenRatio || "--";
+        document.getElementById("emotion-profit").textContent = emo.profitRatio || "--";
+        document.getElementById("emotion-risefall").textContent = (emo.riseNum || "--") + " / " + (emo.fallNum || "--");
+        document.getElementById("emotion-up").textContent = emo.upNum || "--";
+        document.getElementById("emotion-down").textContent = emo.downNum || "--";
       }
 
       function setIndex(index) {

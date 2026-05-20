@@ -1978,12 +1978,6 @@ function renderHtml() {
                 formatter() { return this.value + "%"; },
               },
             },
-            {
-              title: { text: null },
-              opposite: false,
-              gridLineWidth: 0,
-              visible: false,
-            },
           ],
           tooltip: {
             shared: true,
@@ -2350,17 +2344,19 @@ function renderHtml() {
           id: "net-flow-bars",
           type: "column",
           name: "市场净资金",
-          yAxis: 2,
-          showInLegend: true,
-          enableMouseTracking: true,
-          zIndex: 1,
+          yAxis: 0,
+          showInLegend: false,
+          enableMouseTracking: false,
+          zIndex: 0,
+          grouping: false,
           groupPadding: 0,
-          pointPadding: 0.1,
+          pointPadding: 0,
           borderWidth: 0,
+          pointWidth: 4,
           data: netFlowVisible.map((v, i) => ({
             x: i,
             y: v,
-            color: v != null ? (v >= 0 ? "rgba(220,38,38,0.35)" : "rgba(22,163,74,0.35)") : "transparent",
+            color: v != null ? (v >= 0 ? "rgba(22,163,74,0.30)" : "rgba(220,38,38,0.30)") : "transparent",
           })),
         };
         if (netFlowExisting) {

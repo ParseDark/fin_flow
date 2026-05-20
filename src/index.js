@@ -164,7 +164,6 @@ export class CapitalFlowCollector extends DurableObject {
     }
     const allPlates = [...merged.values()];
     const groups = buildFlowGroups(allPlates);
-    const reverseGroups = buildFlowGroups(reverseList);
 
     const latestSnapshot = {
       updatedAt: new Date().toISOString(),
@@ -173,7 +172,6 @@ export class CapitalFlowCollector extends DurableObject {
       laggards: groups.laggards,
       concepts: groups.ranking,
       ranking: groups.ranking,
-      reverse: reverseGroups.ranking.slice(0, DISPLAY_CONCEPT_COUNT),
     };
 
     const dateKey = getChinaDateKey(new Date(latestSnapshot.updatedAt));
@@ -208,9 +206,6 @@ export class CapitalFlowCollector extends DurableObject {
     const latest = await this.ctx.storage.get("latest");
     const tracked = trackedSeriesFromSamples(samples);
 
-    // Reverse tracked series
-    const reverseTracked = trackedReverseSeriesFromSamples(samples);
-
     return {
       requestedDate: targetDate,
       availableDates,
@@ -226,14 +221,6 @@ export class CapitalFlowCollector extends DurableObject {
           name: item.name,
           data: samples.map((sample) => {
             const match = [...sample.leaders, ...sample.laggards].find((entry) => entry.code === item.code);
-            return match ? match.mainFundDiff : null;
-          }),
-        })),
-        reverseSeries: reverseTracked.map((item) => ({
-          code: item.code,
-          name: item.name,
-          data: samples.map((sample) => {
-            const match = (sample.reverse || []).find((entry) => entry.code === item.code);
             return match ? match.mainFundDiff : null;
           }),
         })),
@@ -364,7 +351,6 @@ function compactSample(snapshot) {
     leaders: snapshot.leaders.map(compactItem),
     laggards: snapshot.laggards.map(compactItem),
     concepts: snapshot.concepts.map(compactItem),
-    revers: (snapshot.reverse || []).map(compactItem),
   };
 }
 
@@ -385,7 +371,6 @@ function expandSample(sample) {
     leaders: sample.leaders.map(expandItem),
     laggards: sample.laggards.map(expandItem),
     concepts: (sample.concepts || []).map(expandItem),
-    reverse: (sample.revers || []).map(expandItem),
   };
 }
 
@@ -424,23 +409,6 @@ function trackedSeriesFromSamples(samples) {
   const latest = samples.at(-1);
   const all = latest.concepts?.length ? latest.concepts : [...latest.leaders, ...latest.laggards];
   // Take top 5 inflow + top 5 outflow for cleaner chart
-  const topIn = all.filter((item) => item.mainFundDiff > 0).slice(0, 5);
-  const topOut = all.filter((item) => item.mainFundDiff < 0).slice(0, 5);
-  const tracked = [...topIn, ...topOut].sort((a, b) => Math.abs(b.mainFundDiff) - Math.abs(a.mainFundDiff));
-  const deduped = new Map();
-
-  tracked.forEach((item) => {
-    if (!deduped.has(item.code)) {
-      deduped.set(item.code, { code: item.code, name: item.name });
-    }
-  });
-
-  return [...deduped.values()];
-}
-
-function trackedReverseSeriesFromSamples(samples) {
-  const latest = samples.at(-1);
-  const all = latest.reverse || [];
   const topIn = all.filter((item) => item.mainFundDiff > 0).slice(0, 5);
   const topOut = all.filter((item) => item.mainFundDiff < 0).slice(0, 5);
   const tracked = [...topIn, ...topOut].sort((a, b) => Math.abs(b.mainFundDiff) - Math.abs(a.mainFundDiff));
@@ -1281,7 +1249,7 @@ function renderHtml() {
               <div>
                 <div class="metric-label">当前模式</div>
                 <div class="metric-value" style="font-size:34px;">20 概念回放</div>
-                <div class="metric-sub">10 个正向资金 + 10 个逆向资金，同时追踪</div>
+                <div class="metric-sub">基于 cls.cn 概念板块数据，按净流入 / 净流出各取前 10 展示</div>
               </div>
               <button
                 type="button"
@@ -1448,10 +1416,7 @@ function renderHtml() {
             <button class="btn-secondary speed-btn" data-speed="20" type="button">20x</button>
             <button class="btn-secondary speed-btn" data-speed="40" type="button">40x</button>
             <button class="btn-secondary speed-btn" data-speed="60" type="button">60x</button>
-            <label class="toggle-label">
-              <input type="checkbox" id="reverse-toggle" checked>
-              <span class="toggle-text">逆向资金</span>
-            </label>
+
           </div>
         </div>
         <div id="chart"></div>
@@ -1503,7 +1468,6 @@ function renderHtml() {
         conceptFilters: [],
         colorMap: {},
         playbackSpeed: 40,
-        showReverse: true,
       };
 
       readUrlParams();
@@ -1791,8 +1755,7 @@ function renderHtml() {
 
       function buildColorMap(data) {
         const conceptCodes = data.chart.series.map((item) => item.code);
-        const reverseCodes = (data.chart.reverseSeries || []).map((item) => item.code);
-        const allCodes = [...conceptCodes, ...reverseCodes];
+        const allCodes = [...conceptCodes];
         state.colorMap = Object.fromEntries(
           allCodes.map((code, index) => [code, COLORS[index % COLORS.length]]),
         );
@@ -2146,48 +2109,6 @@ function renderHtml() {
           }
         });
 
-        // Reverse series (逆向排序的资金流，dashed)
-        const reverseSeries = state.showReverse
-          ? (data.chart.reverseSeries || []).filter((item) => {
-              if (state.conceptFilters.length > 0) return state.conceptFilters.includes(item.code);
-              return true;
-            })
-          : [];
-
-        if (state.showReverse) {
-          reverseSeries.forEach((item) => {
-            const revId = "rev-" + item.code;
-            const existing = currentChart.series.find((series) => series.options.id === revId);
-            const color = colorForCode(item.code);
-            const options = {
-              id: revId,
-              type: "spline",
-              name: item.name + " · 逆向",
-              color,
-              dashStyle: "Dash",
-              lineWidth: 1.5,
-              opacity: 0.7,
-              zoneAxis: "y",
-              zones: [
-                { value: 0, color: "#16a34a" },
-                { color },
-              ],
-              data: visiblePlaybackData(item.data),
-            };
-
-            if (existing) {
-              existing.update({ name: item.name + " · 逆向", color, zones: options.zones, dashStyle: "Dash" }, false);
-              existing.setData(options.data, false, { duration: 300 });
-            } else {
-              currentChart.addSeries(options, false, { duration: 300 });
-            }
-          });
-        } else {
-          currentChart.series
-            .filter((series) => series.options.id && series.options.id.startsWith("rev-"))
-            .forEach((series) => series.remove(false));
-        }
-
         const concentrationExisting = currentChart.series.find((series) => series.options.id === "concentration-series");
         const concentrationMarkerExisting = currentChart.series.find((series) => series.options.id === "concentration-marker");
         const concentrationSeries = {
@@ -2348,13 +2269,12 @@ function renderHtml() {
         currentChart.series
           .filter((series) => {
             const isPrimary = visibleSeries.some((item) => item.code === series.options.id);
-            const isReverse = reverseSeries.some((item) => ("rev-" + item.code) === series.options.id);
             const isConcentration = series.options.id === "concentration-series";
             const isTopMarker = featured.top.some((item) => ("marker-" + item.code) === series.options.id);
             const isTrail = featured.top.some((item) => ("trail-" + item.code) === series.options.id);
             const isBottomMarker = featured.bottom.some((item) => ("marker-bottom-" + item.code) === series.options.id);
             const isConcentrationMarker = series.options.id === "concentration-marker";
-            return !isPrimary && !isReverse && !isConcentration && !isConcentrationMarker && !isTopMarker && !isTrail && !isBottomMarker;
+            return !isPrimary && !isConcentration && !isConcentrationMarker && !isTopMarker && !isTrail && !isBottomMarker;
           })
           .forEach((series) => series.remove(false));
 
@@ -2577,15 +2497,6 @@ function renderHtml() {
         });
       });
 
-      const reverseToggle = document.getElementById("reverse-toggle");
-      if (reverseToggle) {
-        reverseToggle.addEventListener("change", () => {
-          state.showReverse = reverseToggle.checked;
-          if (state.data) {
-            renderChart(state.data);
-          }
-        });
-      }
 
       fetchDay().then(() => {
         fetchStatus();

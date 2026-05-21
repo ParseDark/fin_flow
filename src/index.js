@@ -20,6 +20,7 @@ const REQUEST_HEADERS = {
 
 const COLLECT_INTERVAL_MS = 10 * 1000;
 const DAILY_SAMPLE_LIMIT = 1500;
+const DAY_SAMPLE_CHUNK_SIZE = 100;
 const RETAIN_DAYS = 7;
 const CHINA_TZ = "Asia/Shanghai";
 const FLOW_GROUP_SIZE = 10;
@@ -229,7 +230,7 @@ export class CapitalFlowCollector extends DurableObject {
           ? todayKey
           : availableDates.at(-1);
 
-    const compactSamples = (await this.ctx.storage.get(dayStorageKey(targetDate))) || [];
+    const compactSamples = await readDaySamples(this.ctx.storage, targetDate);
     if (compactSamples.length === 0) {
       return null;
     }
@@ -276,7 +277,7 @@ export class CapitalFlowCollector extends DurableObject {
     const chinaNow = getChinaParts(now);
     const todayKey = getChinaDateKey(now);
     const meta = (await this.ctx.storage.get("meta")) || {};
-    const compactSamples = (await this.ctx.storage.get(dayStorageKey(todayKey))) || [];
+    const compactSamples = await readDaySamples(this.ctx.storage, todayKey);
     const latest = await this.ctx.storage.get("latest");
     const availableDates = ((await this.ctx.storage.get("availableDates")) || []).sort();
 
@@ -430,11 +431,37 @@ function expandItem(item) {
 }
 
 async function appendSampleToDay(storage, dateKey, sample) {
-  const key = dayStorageKey(dateKey);
-  const current = (await storage.get(key)) || [];
-  current.push(sample);
-  const next = current.slice(-DAILY_SAMPLE_LIMIT);
-  await storage.put(key, next);
+  const meta = await ensureDayStorageMeta(storage, dateKey);
+
+  if (meta.totalSamples >= DAILY_SAMPLE_LIMIT) {
+    const current = await readDaySamples(storage, dateKey);
+    const next = [...current.slice(-(DAILY_SAMPLE_LIMIT - 1)), sample];
+    await writeDaySamples(storage, dateKey, next, meta);
+  } else {
+    let nextMeta = { ...meta };
+    let chunkIndex = nextMeta.chunkCount - 1;
+    let chunk = [];
+
+    if (chunkIndex < 0) {
+      chunkIndex = 0;
+      nextMeta.chunkCount = 1;
+    } else {
+      chunk = (await storage.get(dayChunkKey(dateKey, chunkIndex))) || [];
+    }
+
+    if (chunk.length >= DAY_SAMPLE_CHUNK_SIZE) {
+      chunkIndex = nextMeta.chunkCount;
+      nextMeta.chunkCount += 1;
+      chunk = [];
+    }
+
+    chunk.push(sample);
+    nextMeta.totalSamples += 1;
+
+    await storage.put(dayChunkKey(dateKey, chunkIndex), chunk);
+    await storage.put(dayMetaKey(dateKey), nextMeta);
+    await storage.delete(dayStorageKey(dateKey));
+  }
 
   const availableDates = ((await storage.get("availableDates")) || []).filter(Boolean);
   if (!availableDates.includes(dateKey)) {
@@ -444,7 +471,7 @@ async function appendSampleToDay(storage, dateKey, sample) {
 
   while (availableDates.length > RETAIN_DAYS) {
     const expired = availableDates.shift();
-    await storage.delete(dayStorageKey(expired));
+    await deleteDaySamples(storage, expired);
   }
 
   await storage.put("availableDates", availableDates);
@@ -470,6 +497,81 @@ function trackedSeriesFromSamples(samples) {
 
 function dayStorageKey(dateKey) {
   return `day:${dateKey}`;
+}
+
+function dayMetaKey(dateKey) {
+  return `day:${dateKey}:meta`;
+}
+
+function dayChunkKey(dateKey, index) {
+  return `day:${dateKey}:chunk:${index}`;
+}
+
+function chunkArray(items, chunkSize) {
+  const chunks = [];
+  for (let i = 0; i < items.length; i += chunkSize) {
+    chunks.push(items.slice(i, i + chunkSize));
+  }
+  return chunks;
+}
+
+async function ensureDayStorageMeta(storage, dateKey) {
+  const existingMeta = await storage.get(dayMetaKey(dateKey));
+  if (existingMeta) return existingMeta;
+
+  const legacySamples = (await storage.get(dayStorageKey(dateKey))) || [];
+  if (legacySamples.length === 0) {
+    return { chunkCount: 0, totalSamples: 0 };
+  }
+
+  return writeDaySamples(storage, dateKey, legacySamples.slice(-DAILY_SAMPLE_LIMIT));
+}
+
+async function readDaySamples(storage, dateKey) {
+  const meta = await storage.get(dayMetaKey(dateKey));
+  if (!meta || !meta.chunkCount) {
+    return (await storage.get(dayStorageKey(dateKey))) || [];
+  }
+
+  const chunkReads = [];
+  for (let index = 0; index < meta.chunkCount; index += 1) {
+    chunkReads.push(storage.get(dayChunkKey(dateKey, index)));
+  }
+
+  const chunks = await Promise.all(chunkReads);
+  return chunks.flatMap((chunk) => chunk || []);
+}
+
+async function writeDaySamples(storage, dateKey, samples, previousMeta = null) {
+  const trimmed = samples.slice(-DAILY_SAMPLE_LIMIT);
+  const chunks = chunkArray(trimmed, DAY_SAMPLE_CHUNK_SIZE);
+  const oldMeta = previousMeta || (await storage.get(dayMetaKey(dateKey))) || { chunkCount: 0, totalSamples: 0 };
+
+  await Promise.all(chunks.map((chunk, index) => storage.put(dayChunkKey(dateKey, index), chunk)));
+
+  for (let index = chunks.length; index < (oldMeta.chunkCount || 0); index += 1) {
+    await storage.delete(dayChunkKey(dateKey, index));
+  }
+
+  const nextMeta = {
+    chunkCount: chunks.length,
+    totalSamples: trimmed.length,
+  };
+
+  await storage.put(dayMetaKey(dateKey), nextMeta);
+  await storage.delete(dayStorageKey(dateKey));
+  return nextMeta;
+}
+
+async function deleteDaySamples(storage, dateKey) {
+  const meta = await storage.get(dayMetaKey(dateKey));
+  if (meta?.chunkCount) {
+    for (let index = 0; index < meta.chunkCount; index += 1) {
+      await storage.delete(dayChunkKey(dateKey, index));
+    }
+  }
+  await storage.delete(dayMetaKey(dateKey));
+  await storage.delete(dayStorageKey(dateKey));
 }
 
 function toNumber(value) {
@@ -936,6 +1038,7 @@ function renderHtml() {
       }
 
       .metric-grid {
+        position: relative;
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 12px;
@@ -973,6 +1076,7 @@ function renderHtml() {
       }
 
       .chart-panel {
+        position: relative;
         margin-bottom: 16px;
         padding: 20px;
       }
@@ -1237,6 +1341,7 @@ function renderHtml() {
       }
 
       .concepts-panel {
+        position: relative;
         padding: 20px;
       }
 
@@ -1344,12 +1449,147 @@ function renderHtml() {
       .gold { color: var(--gold); }
       .blue { color: var(--blue); }
 
+      .loading-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 15;
+        display: none;
+        padding: 16px;
+        border-radius: inherit;
+        background: linear-gradient(180deg, rgba(250, 250, 250, 0.84), rgba(244, 244, 245, 0.78));
+        backdrop-filter: blur(6px);
+      }
+
+      .dark .loading-overlay {
+        background: linear-gradient(180deg, rgba(9, 9, 11, 0.82), rgba(24, 24, 27, 0.78));
+      }
+
+      body[data-loading="true"] .loading-overlay {
+        display: block;
+      }
+
+      body[data-loading="true"] .loading-dim {
+        pointer-events: none;
+      }
+
+      .loading-stack {
+        display: grid;
+        gap: 12px;
+        height: 100%;
+      }
+
+      .loading-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        height: 100%;
+      }
+
+      .loading-concepts {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        height: 100%;
+      }
+
+      .skeleton-card,
+      .skeleton-line {
+        position: relative;
+        overflow: hidden;
+        border-radius: 14px;
+        background: rgba(63, 63, 70, 0.08);
+      }
+
+      .dark .skeleton-card,
+      .dark .skeleton-line {
+        background: rgba(244, 244, 245, 0.08);
+      }
+
+      .skeleton-card::after,
+      .skeleton-line::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        transform: translateX(-100%);
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.36), transparent);
+        animation: skeleton-shimmer 1.2s ease-in-out infinite;
+      }
+
+      .dark .skeleton-card::after,
+      .dark .skeleton-line::after {
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.14), transparent);
+      }
+
+      .skeleton-card {
+        min-height: 112px;
+      }
+
+      .skeleton-line {
+        height: 12px;
+      }
+
+      .skeleton-line.lg {
+        height: 18px;
+      }
+
+      .skeleton-line.sm {
+        width: 38%;
+      }
+
+      .skeleton-line.md {
+        width: 62%;
+      }
+
+      .skeleton-line.wide {
+        width: 86%;
+      }
+
+      .skeleton-chart {
+        min-height: 540px;
+      }
+
+      .skeleton-netflow {
+        min-height: 120px;
+      }
+
+      .skeleton-emotion {
+        min-height: 180px;
+      }
+
+      .skeleton-concept {
+        min-height: 88px;
+      }
+
+      .loading-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        width: fit-content;
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        color: var(--muted);
+        background: rgba(255,255,255,0.5);
+      }
+
+      .dark .loading-label {
+        background: rgba(255,255,255,0.06);
+      }
+
+      @keyframes skeleton-shimmer {
+        100% {
+          transform: translateX(100%);
+        }
+      }
+
       @media (max-width: 920px) {
         .hero,
         .controls,
         .metric-grid,
         .status-rail,
-        .concepts-grid {
+        .concepts-grid,
+        .loading-grid,
+        .loading-concepts {
           grid-template-columns: 1fr;
         }
 
@@ -1359,7 +1599,7 @@ function renderHtml() {
       }
     </style>
   </head>
-  <body>
+  <body data-loading="true">
     <main class="page">
       <section class="hero">
         <article class="panel hero-copy">
@@ -1376,7 +1616,6 @@ function renderHtml() {
               <div>
                 <div class="metric-label">当前模式</div>
                 <div class="metric-value" style="font-size:34px;">20 概念回放</div>
-                <div class="metric-sub">基于 cls.cn 概念板块数据，按净流入 / 净流出各取前 10 展示</div>
               </div>
               <button
                 type="button"
@@ -1452,7 +1691,7 @@ function renderHtml() {
         </div>
       </section>
 
-      <section class="metric-grid">
+      <section class="metric-grid loading-dim" aria-busy="true">
         <article class="card metric">
           <header class="metric-row">
             <div>
@@ -1607,9 +1846,24 @@ function renderHtml() {
             <p class="metric-sub">涨停 <span id="emotion-up">--</span> · 跌停 <span id="emotion-down">--</span></p>
           </section>
         </article>
+        <div class="loading-overlay" aria-hidden="true">
+          <div class="loading-stack">
+            <div class="loading-label">正在加载交易日数据...</div>
+            <div class="loading-grid">
+              <div class="skeleton-card"></div>
+              <div class="skeleton-card"></div>
+              <div class="skeleton-card"></div>
+              <div class="skeleton-card"></div>
+              <div class="skeleton-card"></div>
+              <div class="skeleton-card"></div>
+              <div class="skeleton-card"></div>
+              <div class="skeleton-card"></div>
+            </div>
+          </div>
+        </div>
       </section>
 
-      <section class="panel chart-panel">
+      <section class="panel chart-panel loading-dim" aria-busy="true">
         <div class="chart-head">
           <div>
             <div class="chart-title">日内资金曲线</div>
@@ -1618,6 +1872,7 @@ function renderHtml() {
               <span class="chart-filter-tags">
                 <button class="btn-outline size-sm chart-filter-btn is-active" data-filter="all">全部</button>
                 <button class="btn-outline size-sm chart-filter-btn" data-filter="top3">关注前三</button>
+                <button class="btn-outline size-sm chart-filter-btn" data-filter="bottom3">关注后三</button>
                 <button class="btn-outline size-sm chart-filter-btn" data-filter="inflow">只看净流入</button>
                 <button class="btn-outline size-sm chart-filter-btn" data-filter="outflow">只看净流出</button>
               </span>
@@ -1643,9 +1898,19 @@ function renderHtml() {
           </div>
           <input id="timeline" class="timeline input w-full" type="range" min="0" max="0" value="0" step="1">
         </div>
+        <div class="loading-overlay" aria-hidden="true">
+          <div class="loading-stack">
+            <div class="loading-label">正在绘制日内资金曲线...</div>
+            <div class="skeleton-line wide"></div>
+            <div class="skeleton-card skeleton-chart"></div>
+            <div class="skeleton-card skeleton-netflow"></div>
+            <div class="skeleton-card skeleton-emotion"></div>
+            <div class="skeleton-line md"></div>
+          </div>
+        </div>
       </section>
 
-      <section class="panel concepts-panel">
+      <section class="panel concepts-panel loading-dim" aria-busy="true">
         <div class="concepts-head">
           <div>
             <div class="chart-title" style="font-size:24px;">概念板块资金流</div>
@@ -1654,6 +1919,19 @@ function renderHtml() {
           <div class="metric-sub">Top 20 Concepts</div>
         </div>
         <div class="concepts-grid" id="concepts-grid"></div>
+        <div class="loading-overlay" aria-hidden="true">
+          <div class="loading-stack">
+            <div class="loading-label">正在整理概念资金流...</div>
+            <div class="loading-concepts">
+              <div class="skeleton-card skeleton-concept"></div>
+              <div class="skeleton-card skeleton-concept"></div>
+              <div class="skeleton-card skeleton-concept"></div>
+              <div class="skeleton-card skeleton-concept"></div>
+              <div class="skeleton-card skeleton-concept"></div>
+              <div class="skeleton-card skeleton-concept"></div>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
 
@@ -1675,6 +1953,8 @@ function renderHtml() {
         "#10b981",
         "#c084fc",
       ];
+      const NEW_ENTRY_MIN_INDEX = 3;
+      const NEW_ENTRY_MAX_PER_SIDE = 3;
 
       const state = {
         data: null,
@@ -1685,6 +1965,13 @@ function renderHtml() {
         playbackSpeed: 40,
         chartFilter: "all",
       };
+
+      function setPageLoading(isLoading) {
+        document.body.setAttribute("data-loading", isLoading ? "true" : "false");
+        document.querySelectorAll(".metric-grid, .chart-panel, .concepts-panel").forEach((section) => {
+          section.setAttribute("aria-busy", isLoading ? "true" : "false");
+        });
+      }
 
       readUrlParams();
 
@@ -1965,16 +2252,32 @@ function renderHtml() {
         }).format(date);
       }
 
+      function hashCode(value) {
+        const input = String(value || "");
+        let hash = 0;
+        for (let i = 0; i < input.length; i += 1) {
+          hash = ((hash << 5) - hash + input.charCodeAt(i)) | 0;
+        }
+        return Math.abs(hash);
+      }
+
+      function stableColorForCode(code) {
+        const hash = hashCode(code);
+        const hue = hash % 360;
+        const saturation = 68 + (hash % 8);
+        const lightness = 52 + (hash % 10);
+        return "hsl(" + hue + "deg " + saturation + "% " + lightness + "%)";
+      }
+
       function buildColorMap(data) {
         const conceptCodes = data.chart.series.map((item) => item.code);
-        const allCodes = [...conceptCodes];
         state.colorMap = Object.fromEntries(
-          allCodes.map((code, index) => [code, COLORS[index % COLORS.length]]),
+          conceptCodes.map((code) => [code, stableColorForCode(code)]),
         );
       }
 
       function colorForCode(code) {
-        return state.colorMap[code] || COLORS[0];
+        return state.colorMap[code] || stableColorForCode(code) || COLORS[0];
       }
 
       function setComboboxValue(value) {
@@ -2154,7 +2457,7 @@ function renderHtml() {
           }, {
             id: "emo-balance", type: "area", name: "成交量", yAxis: 1, color: "rgba(59,130,246,0.2)", lineColor: "rgba(59,130,246,0.6)", lineWidth: 1.5, fillOpacity: 0.15, zIndex: 1, data: [],
           }, {
-            id: "emo-preview", type: "spline", name: "预估成交量", yAxis: 1, color: "rgba(59,130,246,0.5)", lineWidth: 1.2, dashStyle: "Dash", zIndex: 0, data: [],
+            id: "emo-preview", type: "spline", name: "预估成交量", yAxis: 1, color: "#93c5fd", lineColor: "#93c5fd", lineWidth: 2, dashStyle: "ShortDash", zIndex: 3, data: [],
           }],
         });
         return emotionChart;
@@ -2288,6 +2591,54 @@ function renderHtml() {
         ));
       }
 
+      function latestDefinedValue(dataPoints) {
+        for (let index = dataPoints.length - 1; index >= 0; index -= 1) {
+          const value = dataPoints[index];
+          if (value != null) return value;
+        }
+        return null;
+      }
+
+      function detectNewEntryAlerts(seriesList) {
+        const alerts = [];
+
+        seriesList.forEach((item) => {
+          const firstIndex = item.data.findIndex((value) => value != null);
+          if (firstIndex < NEW_ENTRY_MIN_INDEX || firstIndex > state.index) return;
+
+          const y = item.data[firstIndex];
+          if (y == null) return;
+
+          const isInflow = y > 0;
+          alerts.push({
+            code: item.code,
+            name: item.name,
+            x: firstIndex,
+            y,
+            isInflow,
+            color: colorForCode(item.code),
+            tag: item.name,
+          });
+        });
+
+        const sortAlerts = (a, b) => {
+          if (a.x !== b.x) return b.x - a.x;
+          return Math.abs(b.y) - Math.abs(a.y);
+        };
+
+        const inflow = alerts
+          .filter((item) => item.isInflow)
+          .sort(sortAlerts)
+          .slice(0, NEW_ENTRY_MAX_PER_SIDE);
+
+        const outflow = alerts
+          .filter((item) => !item.isInflow)
+          .sort(sortAlerts)
+          .slice(0, NEW_ENTRY_MAX_PER_SIDE);
+
+        return [...inflow, ...outflow];
+      }
+
       function featuredSeries(data) {
         const sample = data.samples?.[state.index];
         const concepts = sample?.concepts || [];
@@ -2340,11 +2691,11 @@ function renderHtml() {
       function renderCustomLegend(data) {
         const series = data.chart.series;
         const inflow = series.filter((item) => {
-          const last = item.data.findLast((v) => v != null);
+          const last = latestDefinedValue(item.data);
           return last != null && last > 0;
         });
         const outflow = series.filter((item) => {
-          const last = item.data.findLast((v) => v != null);
+          const last = latestDefinedValue(item.data);
           return last != null && last < 0;
         });
 
@@ -2393,12 +2744,12 @@ function renderHtml() {
         // Apply chart filter
         if (state.chartFilter === "inflow") {
           visibleSeries = visibleSeries.filter((item) => {
-            const last = item.data.findLast((v) => v != null);
+            const last = latestDefinedValue(item.data);
             return last != null && last > 0;
           });
         } else if (state.chartFilter === "outflow") {
           visibleSeries = visibleSeries.filter((item) => {
-            const last = item.data.findLast((v) => v != null);
+            const last = latestDefinedValue(item.data);
             return last != null && last < 0;
           });
         } else if (state.chartFilter === "top3") {
@@ -2408,8 +2759,19 @@ function renderHtml() {
           const top3Out = concepts.filter((c) => c.mainFundDiff < 0).slice(0, 3).map((c) => c.code);
           const top3Codes = new Set([...top3In, ...top3Out]);
           visibleSeries = visibleSeries.filter((item) => top3Codes.has(item.code));
+        } else if (state.chartFilter === "bottom3") {
+          const sample = data.samples[state.index];
+          const concepts = sample?.concepts || [];
+          const bottom3Codes = new Set(
+            [
+              ...concepts.filter((c) => c.mainFundDiff > 0).slice(-3).map((c) => c.code),
+              ...concepts.filter((c) => c.mainFundDiff < 0).slice(-3).map((c) => c.code),
+            ],
+          );
+          visibleSeries = visibleSeries.filter((item) => bottom3Codes.has(item.code));
         }
         const featured = featuredSeries(data);
+        const newEntryAlerts = detectNewEntryAlerts(visibleSeries);
         const concentrationData = visiblePlaybackData(concentrationSeriesData(data.samples));
         const concentrationRange = concentrationAxisRange(concentrationData);
 
@@ -2560,6 +2922,53 @@ function renderHtml() {
           }
         });
 
+        const entryAlertsSeries = currentChart.series.find((series) => series.options.id === "new-entry-alerts");
+        const entryAlertOptions = {
+          id: "new-entry-alerts",
+          type: "scatter",
+          name: "新进榜提示",
+          showInLegend: false,
+          zIndex: 9,
+          data: newEntryAlerts.map((item) => ({
+            x: item.x,
+            y: item.y,
+            color: item.color,
+            entryTag: item.tag,
+            name: item.name,
+            dataLabels: {
+              enabled: true,
+              allowOverlap: true,
+              crop: false,
+              overflow: "none",
+              y: item.isInflow ? -14 : 16,
+              padding: 0,
+              useHTML: true,
+              formatter() {
+                const bg = item.isInflow ? "rgba(220,38,38,0.9)" : "rgba(22,163,74,0.9)";
+                return '<span style="display:inline-block;padding:2px 6px;border-radius:999px;background:' + bg + ';color:#fff;font-size:10px;font-weight:600;white-space:nowrap;">' + (this.point.entryTag || "") + '</span>';
+              },
+            },
+          })),
+          marker: {
+            enabled: true,
+            symbol: "diamond",
+            radius: 5,
+            lineWidth: 2,
+            lineColor: "rgba(255,255,255,0.9)",
+          },
+          tooltip: {
+            pointFormatter() {
+              return '<span style="color:' + this.color + ';">●</span> ' + this.name + ' <b>' + this.entryTag + '</b><br/>';
+            },
+          },
+        };
+
+        if (entryAlertsSeries) {
+          entryAlertsSeries.setData(entryAlertOptions.data, false, { duration: 220 });
+        } else {
+          currentChart.addSeries(entryAlertOptions, false, { duration: 220 });
+        }
+
         currentChart.series
           .filter((series) => {
             const isPrimary = visibleSeries.some((item) => item.code === series.options.id);
@@ -2568,7 +2977,8 @@ function renderHtml() {
             const isTrail = featured.top.some((item) => ("trail-" + item.code) === series.options.id);
             const isBottomMarker = featured.bottom.some((item) => ("marker-bottom-" + item.code) === series.options.id);
             const isConcentrationMarker = series.options.id === "conc-inflow-marker" || series.options.id === "conc-outflow-marker";
-            return !isPrimary && !isConcentration && !isConcentrationMarker && !isTopMarker && !isTrail && !isBottomMarker;
+            const isNewEntryAlert = series.options.id === "new-entry-alerts";
+            return !isPrimary && !isConcentration && !isConcentrationMarker && !isTopMarker && !isTrail && !isBottomMarker && !isNewEntryAlert;
           })
           .forEach((series) => series.remove(false));
 
@@ -2745,27 +3155,34 @@ function renderHtml() {
         renderConceptGrid(sample);
       }
 
-      async function fetchDay(date) {
-        const query = date ? "?date=" + encodeURIComponent(date) : "";
-        const response = await fetch("/api/finance" + query, { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error("加载交易日数据失败");
+      async function fetchDay(date, options = {}) {
+        const { showLoading = false } = options;
+        if (showLoading) setPageLoading(true);
+
+        try {
+          const query = date ? "?date=" + encodeURIComponent(date) : "";
+          const response = await fetch("/api/finance" + query, { cache: "no-store" });
+          if (!response.ok) {
+            throw new Error("加载交易日数据失败");
+          }
+
+          const data = await response.json();
+          buildColorMap(data);
+          state.data = data;
+          state.index = data.initialIndex;
+
+          if (data.availableDates.length > 0) {
+            renderDateOptions(data.availableDates, data.requestedDate);
+          }
+          syncUrl();
+
+          timeline.max = String(Math.max(0, data.samples.length - 1));
+          renderChart(data);
+          setIndex(state.index);
+          updateSliderPaint();
+        } finally {
+          if (showLoading) setPageLoading(false);
         }
-
-        const data = await response.json();
-        buildColorMap(data);
-        state.data = data;
-        state.index = data.initialIndex;
-
-        if (data.availableDates.length > 0) {
-          renderDateOptions(data.availableDates, data.requestedDate);
-        }
-        syncUrl();
-
-        timeline.max = String(Math.max(0, data.samples.length - 1));
-        renderChart(data);
-        setIndex(state.index);
-        updateSliderPaint();
       }
 
       async function refreshLiveIfNeeded() {
@@ -2789,7 +3206,7 @@ function renderHtml() {
         filterInput: dateFilterInput,
         onSelect: async (value) => {
           stopPlayback();
-          await fetchDay(value);
+          await fetchDay(value, { showLoading: true });
           syncUrl();
         },
       });
@@ -2797,7 +3214,7 @@ function renderHtml() {
       playBtn.addEventListener("click", togglePlayback);
       latestBtn.addEventListener("click", async () => {
         stopPlayback();
-        await fetchDay();
+        await fetchDay(undefined, { showLoading: true });
       });
       timeline.addEventListener("input", () => {
         stopPlayback();
@@ -2825,7 +3242,7 @@ function renderHtml() {
         });
       });
 
-      fetchDay().then(() => {
+      fetchDay(undefined, { showLoading: true }).then(() => {
         fetchStatus();
         updateSpeedButtons();
         updateSliderPaint();

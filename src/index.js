@@ -173,19 +173,18 @@ export class CapitalFlowCollector extends DurableObject {
     if (emotionRes && emotionRes.ok) {
       const emoJson = await emotionRes.json();
       const emoData = emoJson?.data || {};
-      const parseBal = (s) => s ? parseFloat(s.replace(/[^\d.]/g, "")) * (s.includes("万") ? 1 : s.includes("亿") ? 10000 : 1) : 0;
-      const balNum = parseBal(emoData.shsz_balance || "");
       const chg = emoData.shsz_balance_change_px || "";
-      const chgNum = chg ? parseFloat(chg.replace(/[^\d.-]/g, "")) * (chg.includes("万") ? 1 : chg.includes("亿") ? 10000 : 1) : 0;
+      const previewChg = emoData.preview_balance_change_px || "";
       emotion = {
         degree: parseFloat(emoData.market_degree) || 0,
-        balance: balNum,
-        balanceChange: chgNum,
-        previewChange: chgNum,
-        previewChangeStr: emoData.preview_balance_change_px || "",
+        balance: amountToWanYi(emoData.shsz_balance || ""),
+        balanceChange: amountToYi(chg),
+        previewChange: amountToYi(previewChg),
+        previewChangeStr: previewChg,
+        previewBalance: amountToWanYi(emoData.preview_balance || ""),
+        previewBalanceStr: emoData.preview_balance || "",
         balanceStr: emoData.shsz_balance || "",
         balanceChangeStr: chg,
-        previewBalanceStr: emoData.preview_balance || "",
         upRatio: parseFloat(emoData.up_ratio) || 0,
         performance: parseFloat(emoData.performance) || 0,
         upOpenRatio: parseFloat(emoData.up_open_ratio) || 0,
@@ -267,6 +266,7 @@ export class CapitalFlowCollector extends DurableObject {
         degree: samples.map((s) => (s.emotion || {}).degree || null),
         balance: samples.map((s) => (s.emotion || {}).balance || null),
         previewChange: samples.map((s) => (s.emotion || {}).previewChange || null),
+        previewBalance: samples.map((s) => (s.emotion || {}).previewBalance || null),
       },
     };
   }
@@ -474,6 +474,26 @@ function dayStorageKey(dateKey) {
 
 function toNumber(value) {
   return typeof value === "number" ? value : 0;
+}
+
+function parseChineseAmount(value) {
+  if (!value) return 0;
+  const numeric = parseFloat(String(value).replace(/[^\d.-]/g, ""));
+  if (!Number.isFinite(numeric)) return 0;
+
+  // Order matters: "万亿" contains both "万" and "亿".
+  if (value.includes("万亿")) return numeric * 1000000000000;
+  if (value.includes("亿")) return numeric * 100000000;
+  if (value.includes("万")) return numeric * 10000;
+  return numeric;
+}
+
+function amountToWanYi(value) {
+  return parseChineseAmount(value) / 1000000000000;
+}
+
+function amountToYi(value) {
+  return parseChineseAmount(value) / 100000000;
 }
 
 function isTradingTime(now) {
@@ -1839,6 +1859,7 @@ function renderHtml() {
 
       function formatFund(value) {
         const abs = Math.abs(value);
+        if (abs >= 1e12) return (value / 1e12).toFixed(2) + "万亿";
         if (abs >= 1e8) return (value / 1e8).toFixed(abs >= 1e10 ? 0 : 2) + "亿";
         if (abs >= 1e4) return (value / 1e4).toFixed(2) + "万";
         return String(value);
@@ -2091,7 +2112,7 @@ function renderHtml() {
           title: { text: "市场情绪", align: "left", style: { color: "rgba(244,244,245,0.7)", fontSize: "11px", fontWeight: "400" } },
           credits: { enabled: false },
           exporting: { enabled: false },
-          legend: { enabled: false },
+          legend: { enabled: true, align: "right", verticalAlign: "top", layout: "horizontal", itemStyle: { color: "rgba(244,244,245,0.7)", fontSize: "10px" }, itemDistance: 14, symbolRadius: 2, symbolWidth: 14, symbolHeight: 3, margin: 0 },
           xAxis: {
             categories: [],
             tickLength: 0,
@@ -2107,7 +2128,7 @@ function renderHtml() {
             title: { text: null },
             opposite: true,
             gridLineWidth: 0,
-            labels: { style: { color: "rgba(244,244,245,0.4)", fontSize: "10px" }, formatter() { return formatFund(this.value); } },
+            labels: { style: { color: "rgba(244,244,245,0.4)", fontSize: "10px" }, formatter() { return this.value + "万亿"; } },
           }],
           tooltip: {
             shared: true,
@@ -2120,7 +2141,7 @@ function renderHtml() {
                 this.points.map((p) =>
                   '<div style="display:flex;justify-content:space-between;gap:12px;font-size:11px;line-height:1.4;">' +
                   '<span>' + p.series.name + '</span>' +
-                  '<span style="font-weight:500;">' + (p.series.options.id === "emo-balance" ? formatFund(p.y) : p.y) + '</span>' +
+                  '<span style="font-weight:500;">' + (p.series.options.id === "emo-balance" || p.series.options.id === "emo-preview" ? p.y + "万亿" : p.y) + '</span>' +
                   '</div>'
                 ).join("");
             },
@@ -2133,7 +2154,7 @@ function renderHtml() {
           }, {
             id: "emo-balance", type: "area", name: "成交量", yAxis: 1, color: "rgba(59,130,246,0.2)", lineColor: "rgba(59,130,246,0.6)", lineWidth: 1.5, fillOpacity: 0.15, zIndex: 1, data: [],
           }, {
-            id: "emo-preview", type: "spline", name: "预估增量", yAxis: 1, color: "rgba(59,130,246,0.5)", lineWidth: 1.2, dashStyle: "Dash", zIndex: 0, data: [],
+            id: "emo-preview", type: "spline", name: "预估成交量", yAxis: 1, color: "rgba(59,130,246,0.5)", lineWidth: 1.2, dashStyle: "Dash", zIndex: 0, data: [],
           }],
         });
         return emotionChart;
@@ -2580,7 +2601,7 @@ function renderHtml() {
         const previewSeries = emoChart.series.find((s) => s.options.id === "emo-preview");
         degreeSeries.setData(visiblePlaybackData(emoData.degree), false);
         balanceSeries.setData(visiblePlaybackData(emoData.balance), false);
-        previewSeries.setData(visiblePlaybackData(emoData.previewChange || []), false);
+        previewSeries.setData(visiblePlaybackData(emoData.previewBalance || []), false);
         emoChart.redraw();
         emoChart.xAxis[0].removePlotLine("emo-playhead");
         emoChart.xAxis[0].addPlotLine({ id: "emo-playhead", value: state.index, color: "#ffd36b", width: 1.5, zIndex: 5 });
@@ -2696,18 +2717,18 @@ function renderHtml() {
 
       function renderEmotion(data) {
         const emo = data.emotion || {};
-        document.getElementById("emotion-degree").textContent = "温度 " + (emo.marketDegree || "--");
+        document.getElementById("emotion-degree").textContent = "温度 " + (emo.degree || "--") + "°";
         document.getElementById("emotion-balance").textContent = emo.balanceStr || "--";
         const chgEl = document.getElementById("emotion-balchg");
         const chg = emo.balanceChange || 0;
         chgEl.textContent = (chg >= 0 ? "+" : "") + formatFund(chg);
         chgEl.className = chg >= 0 ? "up" : "down";
-        document.getElementById("emotion-preview").textContent = emo.previewChangeStr || "--";
+        document.getElementById("emotion-preview").textContent = emo.previewBalanceStr || "--";
         document.getElementById("emotion-updown").textContent = (emo.riseNum || "--") + " / " + (emo.fallNum || "--");
-        document.getElementById("emotion-ratio").textContent = emo.upRatio || "--";
-        document.getElementById("emotion-perf").textContent = emo.performance || "--";
-        document.getElementById("emotion-open").textContent = emo.upOpenRatio || "--";
-        document.getElementById("emotion-profit").textContent = emo.profitRatio || "--";
+        document.getElementById("emotion-ratio").textContent = (emo.upRatio ? emo.upRatio + "%" : "--");
+        document.getElementById("emotion-perf").textContent = emo.performance ? emo.performance + "%" : "--";
+        document.getElementById("emotion-open").textContent = emo.upOpenRatio ? emo.upOpenRatio + "%" : "--";
+        document.getElementById("emotion-profit").textContent = emo.profitRatio ? emo.profitRatio + "%" : "--";
         document.getElementById("emotion-risefall").textContent = (emo.riseNum || "--") + " / " + (emo.fallNum || "--");
         document.getElementById("emotion-up").textContent = emo.upNum || "--";
         document.getElementById("emotion-down").textContent = emo.downNum || "--";

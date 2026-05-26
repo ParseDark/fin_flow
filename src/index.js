@@ -25,8 +25,9 @@ const DAILY_SAMPLE_LIMIT = 1500;
 const DAY_SAMPLE_CHUNK_SIZE = 100;
 const RETAIN_DAYS = 7;
 const CHINA_TZ = "Asia/Shanghai";
-const FLOW_GROUP_SIZE = 20;
-const DISPLAY_CONCEPT_COUNT = FLOW_GROUP_SIZE * 2;
+const MAX_FLOW_GROUP_SIZE = 30;
+const DEFAULT_FLOW_GROUP_SIZE = 20;
+const DISPLAY_CONCEPT_COUNT = DEFAULT_FLOW_GROUP_SIZE * 2;
 
 export default {
   async fetch(request, env) {
@@ -377,14 +378,14 @@ function buildFlowGroups(list) {
   const topInflow = normalized
     .filter((item) => Number.isFinite(item.mainFundDiff) && item.mainFundDiff > 0)
     .sort((a, b) => b.mainFundDiff - a.mainFundDiff)
-    .slice(0, FLOW_GROUP_SIZE);
+    .slice(0, MAX_FLOW_GROUP_SIZE);
 
   const topOutflow = normalized
     .filter((item) => Number.isFinite(item.mainFundDiff) && item.mainFundDiff < 0)
     .sort((a, b) => a.mainFundDiff - b.mainFundDiff)
-    .slice(0, FLOW_GROUP_SIZE);
+    .slice(0, MAX_FLOW_GROUP_SIZE);
 
-  // Ranking: 20 inflow + 20 outflow, each sorted by abs desc within group
+  // Ranking: keep max tracked inflow/outflow groups, sorted by abs desc within group
   const ranking = [
     ...topInflow,
     ...topOutflow,
@@ -486,8 +487,8 @@ function trackedSeriesFromSamples(samples) {
   const latest = samples.at(-1);
   const all = latest.concepts?.length ? latest.concepts : [...latest.leaders, ...latest.laggards];
   // Track the default visible inflow/outflow groups on the replay chart.
-  const topIn = all.filter((item) => item.mainFundDiff > 0).slice(0, FLOW_GROUP_SIZE);
-  const topOut = all.filter((item) => item.mainFundDiff < 0).slice(0, FLOW_GROUP_SIZE);
+  const topIn = all.filter((item) => item.mainFundDiff > 0).slice(0, MAX_FLOW_GROUP_SIZE);
+  const topOut = all.filter((item) => item.mainFundDiff < 0).slice(0, MAX_FLOW_GROUP_SIZE);
   const tracked = [...topIn, ...topOut].sort((a, b) => Math.abs(b.mainFundDiff) - Math.abs(a.mainFundDiff));
   const deduped = new Map();
 
@@ -2045,10 +2046,12 @@ function renderHtml() {
         <div class="chart-head">
           <div>
             <div class="chart-title">日内资金曲线</div>
-            <div class="chart-note">把主力净流入前 ${FLOW_GROUP_SIZE} 和净流出前 ${FLOW_GROUP_SIZE} 的概念全部叠到同一张时间轴。光标所在位置，就是你当前查看的市场切片。</div>
+            <div class="chart-note">默认展示主力净流入前 ${DEFAULT_FLOW_GROUP_SIZE} 和净流出前 ${DEFAULT_FLOW_GROUP_SIZE} 的概念，可切换到前 10 / 20 / 30。光标所在位置，就是你当前查看的市场切片。</div>
             <div class="chart-stats">
               <span class="chart-filter-tags">
-                <button class="btn-outline size-sm chart-filter-btn is-active" data-filter="all">全部</button>
+                <button class="btn-outline size-sm chart-filter-btn" data-filter="limit10">前10</button>
+                <button class="btn-outline size-sm chart-filter-btn is-active" data-filter="limit20">前20</button>
+                <button class="btn-outline size-sm chart-filter-btn" data-filter="limit30">前30</button>
                 <button class="btn-outline size-sm chart-filter-btn" data-filter="top3">关注前三</button>
                 <button class="btn-outline size-sm chart-filter-btn" data-filter="bottom3">关注后三</button>
                 <button class="btn-outline size-sm chart-filter-btn" data-filter="inflow">只看净流入</button>
@@ -2148,7 +2151,7 @@ function renderHtml() {
         timer: null,
         colorMap: {},
         playbackSpeed: 40,
-        chartFilter: "all",
+        chartFilter: "limit20",
       };
 
       function setPageLoading(isLoading) {
@@ -2423,9 +2426,7 @@ function renderHtml() {
         const concepts = sample.concepts && sample.concepts.length
           ? sample.concepts
           : [...sample.leaders, ...sample.laggards];
-        const all = concepts.slice(0, 20);
-        const inflow = all.filter((item) => item.mainFundDiff > 0).sort((a, b) => b.mainFundDiff - a.mainFundDiff);
-        const outflow = all.filter((item) => item.mainFundDiff < 0).sort((a, b) => a.mainFundDiff - b.mainFundDiff);
+        const { inflow, outflow } = filteredFlowGroups(concepts, sample, state.chartFilter);
 
         const inflowTop3Abs = inflow.slice(0, 3).reduce((sum, item) => sum + item.mainFundDiff, 0);
         const outflowTop3Abs = outflow.slice(0, 3).reduce((sum, item) => sum + Math.abs(item.mainFundDiff || 0), 0);
@@ -2449,6 +2450,69 @@ function renderHtml() {
           outflowShare,
           inflowLabel: concentrationLabel(inflowShare),
           outflowLabel: concentrationLabel(outflowShare),
+        };
+      }
+
+      function limitFromChartFilter(filter) {
+        if (filter === "limit10") return 10;
+        if (filter === "limit20") return 20;
+        if (filter === "limit30") return 30;
+        return DEFAULT_FLOW_GROUP_SIZE;
+      }
+
+      function sortedFlowSources(concepts, sample) {
+        const inflowSource = sample.leaders && sample.leaders.length
+          ? sample.leaders
+          : concepts.filter((item) => item.mainFundDiff > 0);
+        const outflowSource = sample.laggards && sample.laggards.length
+          ? sample.laggards
+          : concepts.filter((item) => item.mainFundDiff < 0);
+
+        return {
+          inflow: inflowSource
+            .filter((item) => item.mainFundDiff > 0)
+            .sort((a, b) => b.mainFundDiff - a.mainFundDiff),
+          outflow: outflowSource
+            .filter((item) => item.mainFundDiff < 0)
+            .sort((a, b) => a.mainFundDiff - b.mainFundDiff),
+        };
+      }
+
+      function filteredFlowGroups(concepts, sample, filter) {
+        const sorted = sortedFlowSources(concepts, sample);
+        const limit = limitFromChartFilter(filter);
+
+        if (filter === "top3") {
+          return {
+            inflow: sorted.inflow.slice(0, 3),
+            outflow: sorted.outflow.slice(0, 3),
+          };
+        }
+
+        if (filter === "bottom3") {
+          return {
+            inflow: sorted.inflow.slice(-3),
+            outflow: sorted.outflow.slice(-3),
+          };
+        }
+
+        if (filter === "inflow") {
+          return {
+            inflow: sorted.inflow.slice(0, limit),
+            outflow: [],
+          };
+        }
+
+        if (filter === "outflow") {
+          return {
+            inflow: [],
+            outflow: sorted.outflow.slice(0, limit),
+          };
+        }
+
+        return {
+          inflow: sorted.inflow.slice(0, limit),
+          outflow: sorted.outflow.slice(0, limit),
         };
       }
 
@@ -2715,14 +2779,44 @@ function renderHtml() {
           }, {
             id: "emo-anchor-up", type: "scatter", name: "联动上涨", yAxis: 0, color: "#dc2626", zIndex: 5, data: [], showInLegend: false,
             marker: { enabled: true, symbol: "triangle", radius: 5, fillColor: "#dc2626", lineColor: "rgba(255,255,255,0.8)", lineWidth: 1.5 },
+            dataLabels: {
+              enabled: true,
+              allowOverlap: false,
+              crop: false,
+              overflow: "none",
+              x: 8,
+              y: -10,
+              formatter() { return this.point.name || ""; },
+              style: { color: "#fecaca", fontSize: "10px", fontWeight: "600", textOutline: "none" },
+            },
             tooltip: { pointFormatter() { return '<span style="color:#dc2626;">▲</span> ' + this.eventTime + ' ' + this.name + ' <b>上涨</b><br/>'; } },
           }, {
             id: "emo-anchor-down", type: "scatter", name: "联动下跌", yAxis: 0, color: "#16a34a", zIndex: 5, data: [], showInLegend: false,
             marker: { enabled: true, symbol: "triangle-down", radius: 5, fillColor: "#16a34a", lineColor: "rgba(255,255,255,0.8)", lineWidth: 1.5 },
+            dataLabels: {
+              enabled: true,
+              allowOverlap: false,
+              crop: false,
+              overflow: "none",
+              x: 8,
+              y: 14,
+              formatter() { return this.point.name || ""; },
+              style: { color: "#bbf7d0", fontSize: "10px", fontWeight: "600", textOutline: "none" },
+            },
             tooltip: { pointFormatter() { return '<span style="color:#16a34a;">▼</span> ' + this.eventTime + ' ' + this.name + ' <b>下跌</b><br/>'; } },
           }, {
             id: "emo-anchor-flat", type: "scatter", name: "联动事件", yAxis: 0, color: "#f59e0b", zIndex: 5, data: [], showInLegend: false,
             marker: { enabled: true, symbol: "diamond", radius: 4.5, fillColor: "#f59e0b", lineColor: "rgba(255,255,255,0.8)", lineWidth: 1.5 },
+            dataLabels: {
+              enabled: true,
+              allowOverlap: false,
+              crop: false,
+              overflow: "none",
+              x: 8,
+              y: -10,
+              formatter() { return this.point.name || ""; },
+              style: { color: "#fde68a", fontSize: "10px", fontWeight: "600", textOutline: "none" },
+            },
             tooltip: { pointFormatter() { return '<span style="color:#f59e0b;">◆</span> ' + this.eventTime + ' ' + this.name + ' <b>联动</b><br/>'; } },
           }],
         });
@@ -2795,6 +2889,8 @@ function renderHtml() {
             useHTML: true,
             formatter() {
               const pts = this.points.filter((p) => p.series.options.id !== "net-flow-bars" && !p.series.options.id?.startsWith("conc-"));
+              const concIn = this.points.find((p) => p.series.options.id === "conc-inflow");
+              const concOut = this.points.find((p) => p.series.options.id === "conc-outflow");
               const inflowPts = pts.filter((p) => p.y > 0).sort((a, b) => b.y - a.y);
               const outflowPts = pts.filter((p) => p.y < 0).sort((a, b) => a.y - b.y);
 
@@ -2824,6 +2920,18 @@ function renderHtml() {
               html += '</div>';
 
               html += '</div>';
+              if (concIn || concOut) {
+                html += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(244,244,245,0.08);display:flex;gap:16px;">';
+                html += '<div style="flex:1;min-width:140px;display:flex;justify-content:space-between;gap:8px;font-size:11px;line-height:1.5;">';
+                html += '<span style="color:#fca5a5;">流入集中度</span>';
+                html += '<span style="color:#dc2626;font-weight:600;">' + (concIn ? Number(concIn.y).toFixed(2) + '%' : '--') + '</span>';
+                html += '</div>';
+                html += '<div style="flex:1;min-width:140px;display:flex;justify-content:space-between;gap:8px;font-size:11px;line-height:1.5;">';
+                html += '<span style="color:#86efac;">流出集中度</span>';
+                html += '<span style="color:#16a34a;font-weight:600;">' + (concOut ? Number(concOut.y).toFixed(2) + '%' : '--') + '</span>';
+                html += '</div>';
+                html += '</div>';
+              }
               return html;
             },
           },
@@ -3006,35 +3114,29 @@ function renderHtml() {
         const currentChart = ensureChart();
         currentChart.xAxis[0].setCategories(data.sampleTimes, false);
         let visibleSeries = data.chart.series;
+        const sample = data.samples[state.index];
+        const concepts = sample?.concepts || [];
+        const { inflow: filteredInflow, outflow: filteredOutflow } = filteredFlowGroups(concepts, sample || {}, state.chartFilter);
 
         // Apply chart filter
         if (state.chartFilter === "inflow") {
-          visibleSeries = visibleSeries.filter((item) => {
-            const last = latestDefinedValue(item.data);
-            return last != null && last > 0;
-          });
+          const inflowCodes = new Set(filteredInflow.map((item) => item.code));
+          visibleSeries = visibleSeries.filter((item) => inflowCodes.has(item.code));
         } else if (state.chartFilter === "outflow") {
-          visibleSeries = visibleSeries.filter((item) => {
-            const last = latestDefinedValue(item.data);
-            return last != null && last < 0;
-          });
-        } else if (state.chartFilter === "top3") {
-          const sample = data.samples[state.index];
-          const concepts = sample?.concepts || [];
-          const top3In = concepts.filter((c) => c.mainFundDiff > 0).slice(0, 3).map((c) => c.code);
-          const top3Out = concepts.filter((c) => c.mainFundDiff < 0).slice(0, 3).map((c) => c.code);
-          const top3Codes = new Set([...top3In, ...top3Out]);
-          visibleSeries = visibleSeries.filter((item) => top3Codes.has(item.code));
-        } else if (state.chartFilter === "bottom3") {
-          const sample = data.samples[state.index];
-          const concepts = sample?.concepts || [];
-          const bottom3Codes = new Set(
-            [
-              ...concepts.filter((c) => c.mainFundDiff > 0).slice(-3).map((c) => c.code),
-              ...concepts.filter((c) => c.mainFundDiff < 0).slice(-3).map((c) => c.code),
-            ],
-          );
-          visibleSeries = visibleSeries.filter((item) => bottom3Codes.has(item.code));
+          const outflowCodes = new Set(filteredOutflow.map((item) => item.code));
+          visibleSeries = visibleSeries.filter((item) => outflowCodes.has(item.code));
+        } else if (
+          state.chartFilter === "top3" ||
+          state.chartFilter === "bottom3" ||
+          state.chartFilter === "limit10" ||
+          state.chartFilter === "limit20" ||
+          state.chartFilter === "limit30"
+        ) {
+          const visibleCodes = new Set([
+            ...filteredInflow.map((item) => item.code),
+            ...filteredOutflow.map((item) => item.code),
+          ]);
+          visibleSeries = visibleSeries.filter((item) => visibleCodes.has(item.code));
         }
         const featured = featuredSeries(data);
         const newEntryAlerts = detectNewEntryAlerts(visibleSeries);
@@ -3327,8 +3429,8 @@ function renderHtml() {
         const filtered = concepts;
         const allInflow = filtered.filter((item) => item.mainFundDiff >= 0);
         const allOutflow = filtered.filter((item) => item.mainFundDiff < 0);
-        const inflow = allInflow.slice(0, ${FLOW_GROUP_SIZE});
-        const outflow = allOutflow.slice(0, ${FLOW_GROUP_SIZE});
+        const inflow = allInflow.slice(0, ${DEFAULT_FLOW_GROUP_SIZE});
+        const outflow = allOutflow.slice(0, ${DEFAULT_FLOW_GROUP_SIZE});
 
         function renderColumn(items, label, colorClass, total) {
           if (items.length === 0) {
@@ -3512,7 +3614,7 @@ function renderHtml() {
         btn.addEventListener("click", () => {
           state.chartFilter = btn.dataset.filter;
           filterButtons.forEach((b) => b.classList.toggle("is-active", b.dataset.filter === state.chartFilter));
-          if (state.data) renderChart(state.data);
+          if (state.data) setIndex(state.index);
         });
       });
 

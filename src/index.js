@@ -678,9 +678,10 @@ function formatTimeLabel(dateString) {
 
 function normalizeAnchorTimeLabel(value) {
   if (!value) return null;
-  const parts = String(value).trim().split(":").map((part) => part.trim()).filter(Boolean);
-  if (parts.length < 2) return null;
-  const [hour, minute, second = "00"] = parts;
+  const raw = String(value).trim();
+  const match = raw.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return null;
+  const [, hour, minute, second = "00"] = match;
   return `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}:${second.padStart(2, "0")}`;
 }
 

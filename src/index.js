@@ -8,6 +8,8 @@ const REVERSE_API_URL =
 
 const EMOTION_API_URL =
   "https://x-quote.cls.cn/v2/quote/a/stock/emotion?app=CailianpressWeb&os=web&sv=7.7.5&sign=bf0f367462d8cd70917ba5eab3853bce";
+const ANCHOR_API_URL =
+  "https://www.cls.cn/v3/transaction/anchor?app=CailianpressWeb&os=web&sv=7.7.5&sign=b91a1183a5f82b33ab60e751f26b2825";
 
 const REQUEST_HEADERS = {
   "Cache-Control": "no-cache",
@@ -23,7 +25,7 @@ const DAILY_SAMPLE_LIMIT = 1500;
 const DAY_SAMPLE_CHUNK_SIZE = 100;
 const RETAIN_DAYS = 7;
 const CHINA_TZ = "Asia/Shanghai";
-const FLOW_GROUP_SIZE = 10;
+const FLOW_GROUP_SIZE = 20;
 const DISPLAY_CONCEPT_COUNT = FLOW_GROUP_SIZE * 2;
 
 export default {
@@ -238,16 +240,19 @@ export class CapitalFlowCollector extends DurableObject {
     const samples = compactSamples.map(expandSample);
     const latest = await this.ctx.storage.get("latest");
     const tracked = trackedSeriesFromSamples(samples);
+    const sampleTimes = samples.map((item) => formatTimeLabel(item.updatedAt));
+    const anchors = buildAnchorTimeline(await fetchAnchorEvents(targetDate), sampleTimes);
 
     return {
       requestedDate: targetDate,
       availableDates,
       updatedAt: latest?.updatedAt || samples.at(-1).updatedAt,
       latestDate: getChinaDateKey(new Date(latest?.updatedAt || samples.at(-1).updatedAt)),
-      sampleTimes: samples.map((item) => formatTimeLabel(item.updatedAt)),
+      sampleTimes,
       initialIndex: samples.length - 1,
       latestSnapshot: latest || samples.at(-1),
       samples,
+      anchors,
       chart: {
         series: tracked.map((item) => ({
           code: item.code,
@@ -379,7 +384,7 @@ function buildFlowGroups(list) {
     .sort((a, b) => a.mainFundDiff - b.mainFundDiff)
     .slice(0, FLOW_GROUP_SIZE);
 
-  // Ranking: 10 inflow + 10 outflow, each sorted by abs desc within group
+  // Ranking: 20 inflow + 20 outflow, each sorted by abs desc within group
   const ranking = [
     ...topInflow,
     ...topOutflow,
@@ -480,9 +485,9 @@ async function appendSampleToDay(storage, dateKey, sample) {
 function trackedSeriesFromSamples(samples) {
   const latest = samples.at(-1);
   const all = latest.concepts?.length ? latest.concepts : [...latest.leaders, ...latest.laggards];
-  // Take top 5 inflow + top 5 outflow for cleaner chart
-  const topIn = all.filter((item) => item.mainFundDiff > 0).slice(0, 10);
-  const topOut = all.filter((item) => item.mainFundDiff < 0).slice(0, 10);
+  // Track the default visible inflow/outflow groups on the replay chart.
+  const topIn = all.filter((item) => item.mainFundDiff > 0).slice(0, FLOW_GROUP_SIZE);
+  const topOut = all.filter((item) => item.mainFundDiff < 0).slice(0, FLOW_GROUP_SIZE);
   const tracked = [...topIn, ...topOut].sort((a, b) => Math.abs(b.mainFundDiff) - Math.abs(a.mainFundDiff));
   const deduped = new Map();
 
@@ -669,6 +674,86 @@ function getChinaDateKey(date) {
 function formatTimeLabel(dateString) {
   const parts = getChinaParts(new Date(dateString));
   return `${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}:${String(parts.second).padStart(2, "0")}`;
+}
+
+function normalizeAnchorTimeLabel(value) {
+  if (!value) return null;
+  const parts = String(value).trim().split(":").map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  const [hour, minute, second = "00"] = parts;
+  return `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}:${second.padStart(2, "0")}`;
+}
+
+function secondsFromTimeLabel(value) {
+  const normalized = normalizeAnchorTimeLabel(value);
+  if (!normalized) return null;
+  const [hour, minute, second] = normalized.split(":").map(Number);
+  if (![hour, minute, second].every(Number.isFinite)) return null;
+  return hour * 3600 + minute * 60 + second;
+}
+
+function normalizeAnchorDirection(value) {
+  if (value === "up" || value === "down") return value;
+  return "flat";
+}
+
+function findSampleIndexForTime(sampleTimes, timeLabel) {
+  const target = secondsFromTimeLabel(timeLabel);
+  if (target == null || sampleTimes.length === 0) return null;
+
+  for (let index = 0; index < sampleTimes.length; index += 1) {
+    const current = secondsFromTimeLabel(sampleTimes[index]);
+    if (current != null && current >= target) {
+      return index;
+    }
+  }
+
+  return sampleTimes.length - 1;
+}
+
+async function fetchAnchorEvents(dateKey) {
+  const url = `${ANCHOR_API_URL}&cdate=${dateKey}`;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        ...REQUEST_HEADERS,
+        "Content-Type": "application/json;charset=utf-8",
+        Referer: "https://www.cls.cn/finance",
+      },
+    });
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const json = await response.json();
+    const list = Array.isArray(json?.data) ? json.data : [];
+    return list.map((item) => ({
+      time: normalizeAnchorTimeLabel(item.c_time),
+      name: item.symbol_name || "-",
+      direction: normalizeAnchorDirection(item.float),
+    })).filter((item) => item.time && item.name);
+  } catch {
+    return [];
+  }
+}
+
+function buildAnchorTimeline(anchorItems, sampleTimes) {
+  return anchorItems
+    .map((item) => {
+      const index = findSampleIndexForTime(sampleTimes, item.time);
+      if (index == null) return null;
+      return {
+        ...item,
+        index,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a.index !== b.index) return a.index - b.index;
+      return a.name.localeCompare(b.name, "zh-CN");
+    });
 }
 
 function getChinaParts(date) {
@@ -1155,6 +1240,98 @@ function renderHtml() {
           0 8px 30px rgba(0, 0, 0, 0.2);
       }
 
+      .anchor-stream {
+        margin-top: 10px;
+        padding: 12px 14px;
+        border: 1px solid var(--line-soft);
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(9,9,11,0.92), rgba(24,24,27,0.88));
+      }
+
+      .anchor-stream-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .anchor-stream-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: rgba(244,244,245,0.9);
+      }
+
+      .anchor-stream-meta {
+        font-size: 11px;
+        color: rgba(244,244,245,0.52);
+      }
+
+      .anchor-stream-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: 8px;
+      }
+
+      .anchor-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(244,244,245,0.08);
+        background: rgba(255,255,255,0.03);
+      }
+
+      .anchor-item.is-active {
+        border-color: rgba(250,204,21,0.48);
+        box-shadow: inset 0 0 0 1px rgba(250,204,21,0.14);
+      }
+
+      .anchor-item-main {
+        min-width: 0;
+      }
+
+      .anchor-item-time {
+        display: inline-block;
+        margin-bottom: 4px;
+        font-size: 11px;
+        color: rgba(244,244,245,0.52);
+      }
+
+      .anchor-item-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: rgba(244,244,245,0.94);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .anchor-badge {
+        flex-shrink: 0;
+        padding: 4px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .anchor-badge.up {
+        color: #fecaca;
+        background: rgba(220,38,38,0.2);
+      }
+
+      .anchor-badge.down {
+        color: #bbf7d0;
+        background: rgba(22,163,74,0.2);
+      }
+
+      .anchor-badge.flat {
+        color: #fde68a;
+        background: rgba(245,158,11,0.2);
+      }
+
       #chart .highcharts-point.top-marker {
         animation: pulse-marker 1.15s ease-in-out infinite;
         transform-origin: center;
@@ -1603,10 +1780,10 @@ function renderHtml() {
     <main class="page">
       <section class="hero">
         <article class="panel hero-copy">
-          <div class="eyebrow">Concept Flow Replay / 20 Signals</div>
+          <div class="eyebrow">Concept Flow Replay / ${DISPLAY_CONCEPT_COUNT} Signals</div>
           <h1>把一天的题材资金流<br>拉成可回放的盘面。</h1>
           <p class="lead">
-            后台自动采集并按天存储概念板块主力资金流。你现在看到的是 20 个概念的日内轨迹，
+            后台自动采集并按天存储概念板块主力资金流。你现在看到的是 ${DISPLAY_CONCEPT_COUNT} 个概念的日内轨迹，
             可以按交易日切换、拖动到具体时间点，或者直接播放整天的资金迁移过程。
           </p>
         </article>
@@ -1615,7 +1792,7 @@ function renderHtml() {
             <div class="flex items-start justify-between gap-3">
               <div>
                 <div class="metric-label">当前模式</div>
-                <div class="metric-value" style="font-size:34px;">20 概念回放</div>
+                <div class="metric-value" style="font-size:34px;">${DISPLAY_CONCEPT_COUNT} 概念回放</div>
               </div>
               <button
                 type="button"
@@ -1867,7 +2044,7 @@ function renderHtml() {
         <div class="chart-head">
           <div>
             <div class="chart-title">日内资金曲线</div>
-            <div class="chart-note">把主力净流入前 10 和净流出前 10 的概念全部叠到同一张时间轴。光标所在位置，就是你当前查看的市场切片。</div>
+            <div class="chart-note">把主力净流入前 ${FLOW_GROUP_SIZE} 和净流出前 ${FLOW_GROUP_SIZE} 的概念全部叠到同一张时间轴。光标所在位置，就是你当前查看的市场切片。</div>
             <div class="chart-stats">
               <span class="chart-filter-tags">
                 <button class="btn-outline size-sm chart-filter-btn is-active" data-filter="all">全部</button>
@@ -1891,6 +2068,13 @@ function renderHtml() {
         <div class="chart-custom-legend" id="chart-custom-legend"></div>
         <div id="netflow-chart" style="height:120px;margin-top:8px;"></div>
         <div id="emotion-chart" style="height:180px;margin-top:8px;"></div>
+        <div class="anchor-stream">
+          <div class="anchor-stream-head">
+            <div class="anchor-stream-title">大盘联动</div>
+            <div class="anchor-stream-meta" id="anchor-stream-meta">等待联动数据...</div>
+          </div>
+          <div class="anchor-stream-list" id="anchor-stream"></div>
+        </div>
         <div class="scrubber">
           <div class="scrubber-head">
             <div class="muted">时间进度</div>
@@ -1916,7 +2100,7 @@ function renderHtml() {
             <div class="chart-title" style="font-size:24px;">概念板块资金流</div>
             <div class="chart-note">左列为净流入概念，右列为净流出概念。可通过上方筛选器自由选择关注的板块。</div>
           </div>
-          <div class="metric-sub">Top 20 Concepts</div>
+          <div class="metric-sub">Top ${DISPLAY_CONCEPT_COUNT} Concepts</div>
         </div>
         <div class="concepts-grid" id="concepts-grid"></div>
         <div class="loading-overlay" aria-hidden="true">
@@ -2154,6 +2338,69 @@ function renderHtml() {
 
       function formatPercent(value) {
         return (value * 100).toFixed(2) + "%";
+      }
+
+      function formatAnchorDirection(direction) {
+        if (direction === "up") return "↑ 上涨";
+        if (direction === "down") return "↓ 下跌";
+        return "→ 联动";
+      }
+
+      function findLastValueAt(dataPoints, index) {
+        for (let cursor = index; cursor >= 0; cursor -= 1) {
+          const value = dataPoints[cursor];
+          if (value != null) return value;
+        }
+        return null;
+      }
+
+      function buildAnchorScatterData(data) {
+        const anchorItems = data.anchors || [];
+        const degreeSeries = (data.emotionSeries || {}).degree || [];
+        const perIndexCount = {};
+
+        return anchorItems
+          .filter((item) => item.index <= state.index)
+          .map((item) => {
+            const stacked = perIndexCount[item.index] || 0;
+            perIndexCount[item.index] = stacked + 1;
+            const baseY = findLastValueAt(degreeSeries, item.index) ?? 0;
+            const directionFactor = item.direction === "down" ? -1 : 1;
+            return {
+              x: item.index,
+              y: baseY + directionFactor * (3 + stacked * 2),
+              name: item.name,
+              eventTime: item.time,
+              direction: item.direction,
+            };
+          });
+      }
+
+      function renderAnchorStream(data) {
+        const container = document.getElementById("anchor-stream");
+        const meta = document.getElementById("anchor-stream-meta");
+        const anchors = (data.anchors || []).filter((item) => item.index <= state.index);
+        const active = anchors.filter((item) => item.index === state.index);
+        const recent = anchors.slice(-6).reverse();
+
+        meta.textContent = active.length > 0
+          ? "当前时点 " + active.length + " 条联动事件"
+          : "截至当前已发生 " + anchors.length + " 条联动事件";
+
+        if (recent.length === 0) {
+          container.innerHTML = '<div class="muted" style="font-size:12px;">当前时点之前暂无联动事件。</div>';
+          return;
+        }
+
+        container.innerHTML = recent.map((item) =>
+          '<article class="anchor-item' + (item.index === state.index ? ' is-active' : '') + '">' +
+            '<div class="anchor-item-main">' +
+              '<span class="anchor-item-time">' + item.time + '</span>' +
+              '<div class="anchor-item-name">' + item.name + '</div>' +
+            '</div>' +
+            '<span class="anchor-badge ' + item.direction + '">' + formatAnchorDirection(item.direction) + '</span>' +
+          '</article>'
+        ).join("");
       }
 
       function readUrlParams() {
@@ -2441,12 +2688,18 @@ function renderHtml() {
             style: { color: "#fafafa", fontSize: "11px" },
             formatter() {
               return '<div style="font-size:12px;font-weight:600;margin-bottom:4px;">' + this.x + '</div>' +
-                this.points.map((p) =>
-                  '<div style="display:flex;justify-content:space-between;gap:12px;font-size:11px;line-height:1.4;">' +
-                  '<span>' + p.series.name + '</span>' +
-                  '<span style="font-weight:500;">' + (p.series.options.id === "emo-balance" || p.series.options.id === "emo-preview" ? p.y + "万亿" : p.y) + '</span>' +
-                  '</div>'
-                ).join("");
+                this.points.map((p) => {
+                  if (p.series.options.id.startsWith("emo-anchor")) {
+                    return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:11px;line-height:1.4;">' +
+                      '<span>' + (p.point.name || p.series.name) + '</span>' +
+                      '<span style="font-weight:500;">' + formatAnchorDirection(p.point.direction) + '</span>' +
+                    '</div>';
+                  }
+                  return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:11px;line-height:1.4;">' +
+                    '<span>' + p.series.name + '</span>' +
+                    '<span style="font-weight:500;">' + (p.series.options.id === "emo-balance" || p.series.options.id === "emo-preview" ? p.y + "万亿" : p.y) + '</span>' +
+                    '</div>';
+                }).join("");
             },
           },
           plotOptions: {
@@ -2458,6 +2711,18 @@ function renderHtml() {
             id: "emo-balance", type: "area", name: "成交量", yAxis: 1, color: "rgba(59,130,246,0.2)", lineColor: "rgba(59,130,246,0.6)", lineWidth: 1.5, fillOpacity: 0.15, zIndex: 1, data: [],
           }, {
             id: "emo-preview", type: "spline", name: "预估成交量", yAxis: 1, color: "#93c5fd", lineColor: "#93c5fd", lineWidth: 2, dashStyle: "ShortDash", zIndex: 3, data: [],
+          }, {
+            id: "emo-anchor-up", type: "scatter", name: "联动上涨", yAxis: 0, color: "#dc2626", zIndex: 5, data: [], showInLegend: false,
+            marker: { enabled: true, symbol: "triangle", radius: 5, fillColor: "#dc2626", lineColor: "rgba(255,255,255,0.8)", lineWidth: 1.5 },
+            tooltip: { pointFormatter() { return '<span style="color:#dc2626;">▲</span> ' + this.eventTime + ' ' + this.name + ' <b>上涨</b><br/>'; } },
+          }, {
+            id: "emo-anchor-down", type: "scatter", name: "联动下跌", yAxis: 0, color: "#16a34a", zIndex: 5, data: [], showInLegend: false,
+            marker: { enabled: true, symbol: "triangle-down", radius: 5, fillColor: "#16a34a", lineColor: "rgba(255,255,255,0.8)", lineWidth: 1.5 },
+            tooltip: { pointFormatter() { return '<span style="color:#16a34a;">▼</span> ' + this.eventTime + ' ' + this.name + ' <b>下跌</b><br/>'; } },
+          }, {
+            id: "emo-anchor-flat", type: "scatter", name: "联动事件", yAxis: 0, color: "#f59e0b", zIndex: 5, data: [], showInLegend: false,
+            marker: { enabled: true, symbol: "diamond", radius: 4.5, fillColor: "#f59e0b", lineColor: "rgba(255,255,255,0.8)", lineWidth: 1.5 },
+            tooltip: { pointFormatter() { return '<span style="color:#f59e0b;">◆</span> ' + this.eventTime + ' ' + this.name + ' <b>联动</b><br/>'; } },
           }],
         });
         return emotionChart;
@@ -3009,9 +3274,16 @@ function renderHtml() {
         const degreeSeries = emoChart.series.find((s) => s.options.id === "emo-degree");
         const balanceSeries = emoChart.series.find((s) => s.options.id === "emo-balance");
         const previewSeries = emoChart.series.find((s) => s.options.id === "emo-preview");
+        const anchorUpSeries = emoChart.series.find((s) => s.options.id === "emo-anchor-up");
+        const anchorDownSeries = emoChart.series.find((s) => s.options.id === "emo-anchor-down");
+        const anchorFlatSeries = emoChart.series.find((s) => s.options.id === "emo-anchor-flat");
         degreeSeries.setData(visiblePlaybackData(emoData.degree), false);
         balanceSeries.setData(visiblePlaybackData(emoData.balance), false);
         previewSeries.setData(visiblePlaybackData(emoData.previewBalance || []), false);
+        const anchorScatter = buildAnchorScatterData(data);
+        anchorUpSeries.setData(anchorScatter.filter((item) => item.direction === "up"), false);
+        anchorDownSeries.setData(anchorScatter.filter((item) => item.direction === "down"), false);
+        anchorFlatSeries.setData(anchorScatter.filter((item) => item.direction !== "up" && item.direction !== "down"), false);
         emoChart.redraw();
         emoChart.xAxis[0].removePlotLine("emo-playhead");
         emoChart.xAxis[0].addPlotLine({ id: "emo-playhead", value: state.index, color: "#ffd36b", width: 1.5, zIndex: 5 });
@@ -3054,8 +3326,8 @@ function renderHtml() {
         const filtered = concepts;
         const allInflow = filtered.filter((item) => item.mainFundDiff >= 0);
         const allOutflow = filtered.filter((item) => item.mainFundDiff < 0);
-        const inflow = allInflow.slice(0, 10);
-        const outflow = allOutflow.slice(0, 10);
+        const inflow = allInflow.slice(0, ${FLOW_GROUP_SIZE});
+        const outflow = allOutflow.slice(0, ${FLOW_GROUP_SIZE});
 
         function renderColumn(items, label, colorClass, total) {
           if (items.length === 0) {
@@ -3153,6 +3425,7 @@ function renderHtml() {
         renderChart(state.data);
         renderMetrics(sample);
         renderConceptGrid(sample);
+        renderAnchorStream(state.data);
       }
 
       async function fetchDay(date, options = {}) {

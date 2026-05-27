@@ -20,10 +20,11 @@ const REQUEST_HEADERS = {
   "User-Agent": "Mozilla/5.0",
 };
 
-const COLLECT_INTERVAL_MS = 10 * 1000;
+const COLLECT_INTERVAL_MS = 20 * 1000;
 const DAILY_SAMPLE_LIMIT = 1500;
 const DAY_SAMPLE_CHUNK_SIZE = 100;
 const RETAIN_DAYS = 7;
+const API_SAMPLE_WINDOW = 180;
 const CHINA_TZ = "Asia/Shanghai";
 const MAX_FLOW_GROUP_SIZE = 30;
 const DEFAULT_FLOW_GROUP_SIZE = 20;
@@ -233,11 +234,12 @@ export class CapitalFlowCollector extends DurableObject {
           ? todayKey
           : availableDates.at(-1);
 
-    const compactSamples = await readDaySamples(this.ctx.storage, targetDate);
-    if (compactSamples.length === 0) {
+    const allCompactSamples = await readDaySamples(this.ctx.storage, targetDate);
+    if (allCompactSamples.length === 0) {
       return null;
     }
 
+    const compactSamples = selectApiSamples(allCompactSamples, API_SAMPLE_WINDOW);
     const samples = compactSamples.map(expandSample);
     const latest = await this.ctx.storage.get("latest");
     const tracked = trackedSeriesFromSamples(samples);
@@ -287,6 +289,12 @@ export class CapitalFlowCollector extends DurableObject {
     const latest = await this.ctx.storage.get("latest");
     const availableDates = ((await this.ctx.storage.get("availableDates")) || []).sort();
 
+    const parsedNextRunAt = meta.nextRunAt ? new Date(meta.nextRunAt) : null;
+    const effectiveNextRunAt =
+      parsedNextRunAt instanceof Date && Number.isFinite(parsedNextRunAt.getTime()) && parsedNextRunAt.getTime() > now.getTime()
+        ? parsedNextRunAt.toISOString()
+        : nextRunAt(now).toISOString();
+
     return {
       timezone: CHINA_TZ,
       chinaNow: {
@@ -301,7 +309,7 @@ export class CapitalFlowCollector extends DurableObject {
       retainedDays: RETAIN_DAYS,
       availableDates,
       lastSuccessAt: latest?.updatedAt || null,
-      nextRunAt: meta.nextRunAt || null,
+      nextRunAt: effectiveNextRunAt,
       latestSnapshotDate: latest?.updatedAt ? getChinaDateKey(new Date(latest.updatedAt)) : null,
     };
   }
@@ -311,7 +319,6 @@ async function handleFinanceApi(request, env) {
   const url = new URL(request.url);
   const requestedDate = url.searchParams.get("date");
 
-  await ensureCollector(env);
   const stub = getCollectorStub(env);
   let response = await stub.fetch(`https://collector.internal/day${requestedDate ? `?date=${requestedDate}` : ""}`);
 
@@ -334,7 +341,6 @@ async function resetCollector(env) {
 }
 
 async function handleStatusApi(env) {
-  await ensureCollector(env);
   const stub = getCollectorStub(env);
   return stub.fetch("https://collector.internal/status");
 }
@@ -519,6 +525,22 @@ function chunkArray(items, chunkSize) {
     chunks.push(items.slice(i, i + chunkSize));
   }
   return chunks;
+}
+
+function selectApiSamples(samples, limit) {
+  if (samples.length <= limit) {
+    return samples;
+  }
+
+  const selected = [];
+  const step = (samples.length - 1) / (limit - 1);
+
+  for (let index = 0; index < limit; index += 1) {
+    const sampleIndex = Math.round(index * step);
+    selected.push(samples[sampleIndex]);
+  }
+
+  return selected.filter((sample, index, list) => index === 0 || sample !== list[index - 1]);
 }
 
 async function ensureDayStorageMeta(storage, dateKey) {
@@ -2125,7 +2147,7 @@ function renderHtml() {
 
     <script src="https://code.highcharts.com/12/highcharts.js"></script>
     <script>
-      const REFRESH_MS = 10000;
+      const REFRESH_MS = 30000;
       const BASE_PLAY_INTERVAL_MS = 100;
       const COLORS = [
         "#38bdf8",
@@ -2159,6 +2181,10 @@ function renderHtml() {
         document.querySelectorAll(".metric-grid, .chart-panel, .concepts-panel").forEach((section) => {
           section.setAttribute("aria-busy", isLoading ? "true" : "false");
         });
+      }
+
+      function shouldPollLiveData() {
+        return document.visibilityState === "visible";
       }
 
       readUrlParams();
@@ -2618,13 +2644,19 @@ function renderHtml() {
       }
 
       async function fetchStatus() {
-        const response = await fetch("/api/status", { cache: "no-store" });
-        if (!response.ok) return;
-        const status = await response.json();
-        document.getElementById("status-now").textContent = status.chinaNow?.isoLike || "--";
-        document.getElementById("status-session").textContent = formatSessionLabel(status.currentTradingSession);
-        document.getElementById("status-next-run").textContent = formatStatusTime(status.nextRunAt);
-        document.getElementById("status-samples").textContent = String(status.samplesToday ?? "--");
+        if (!shouldPollLiveData()) return false;
+        try {
+          const response = await fetch("/api/status", { cache: "no-store" });
+          if (!response.ok) return false;
+          const status = await response.json();
+          document.getElementById("status-now").textContent = status.chinaNow?.isoLike || "--";
+          document.getElementById("status-session").textContent = formatSessionLabel(status.currentTradingSession);
+          document.getElementById("status-next-run").textContent = formatStatusTime(status.nextRunAt);
+          document.getElementById("status-samples").textContent = String(status.samplesToday ?? "--");
+          return true;
+        } catch {
+          return false;
+        }
       }
 
       function stopPlayback() {
@@ -3556,6 +3588,9 @@ function renderHtml() {
           renderChart(data);
           setIndex(state.index);
           updateSliderPaint();
+          return true;
+        } catch {
+          return false;
         } finally {
           if (showLoading) setPageLoading(false);
         }
@@ -3563,12 +3598,14 @@ function renderHtml() {
 
       async function refreshLiveIfNeeded() {
         if (!state.data) return;
+        if (!shouldPollLiveData()) return;
         if (state.data.requestedDate !== state.data.latestDate) return;
         if (state.playing) return;
 
         const currentDate = state.data.requestedDate;
         const keepAtEnd = state.index >= state.data.samples.length - 1;
-        await fetchDay(currentDate);
+        const ok = await fetchDay(currentDate);
+        if (!ok) return;
         if (!keepAtEnd) {
           setIndex(Math.min(state.index, state.data.samples.length - 1));
         }
@@ -3618,12 +3655,14 @@ function renderHtml() {
         });
       });
 
-      fetchDay(undefined, { showLoading: true }).then(() => {
+      fetchDay(undefined, { showLoading: true }).then((ok) => {
         fetchStatus();
         updateSpeedButtons();
         updateSliderPaint();
-        setInterval(refreshLiveIfNeeded, REFRESH_MS);
-        setInterval(fetchStatus, REFRESH_MS);
+        if (ok) {
+          setInterval(refreshLiveIfNeeded, REFRESH_MS);
+          setInterval(fetchStatus, REFRESH_MS);
+        }
       });
     </script>
   </body>

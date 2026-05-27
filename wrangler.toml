@@ -2,6 +2,10 @@ name = "fin-flow"
 main = "src/index.js"
 compatibility_date = "2026-05-20"
 
+[observability.logs]
+enabled = true
+invocation_logs = true
+
 [durable_objects]
 bindings = [
   { name = "COLLECTOR", class_name = "CapitalFlowCollector" }

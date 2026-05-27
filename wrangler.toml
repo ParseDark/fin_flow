@@ -2,6 +2,9 @@ name = "fin-flow"
 main = "src/index.js"
 compatibility_date = "2026-05-20"
 
+[vars]
+WEB_ANALYTICS_TOKEN = "20aafe3801744bdd981c476fa8596d28"
+
 [observability.logs]
 enabled = true
 invocation_logs = true

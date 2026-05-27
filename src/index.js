@@ -29,29 +29,57 @@ const CHINA_TZ = "Asia/Shanghai";
 const MAX_FLOW_GROUP_SIZE = 10;
 const DEFAULT_FLOW_GROUP_SIZE = 10;
 const DISPLAY_CONCEPT_COUNT = DEFAULT_FLOW_GROUP_SIZE * 2;
+const SITE_NAME = "题材资金流回放";
+const SITE_TITLE = `A股概念资金流数据可视化 | ${SITE_NAME}`;
+const SITE_DESCRIPTION = "提供 A 股概念板块资金流数据可视化，聚焦主力资金净流入 Top 10 与净流出 Top 10，支持日内回放、盘面观察与复盘。";
+const API_NOINDEX_VALUE = "noindex, nofollow, noarchive";
+const PRIMARY_SITE_URL = "https://fin-flow.lingsbot.online";
+const PRIMARY_SITE_ORIGIN = new URL(PRIMARY_SITE_URL).origin;
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    const redirectResponse = redirectToPrimaryHost(url);
+    if (redirectResponse) {
+      return redirectResponse;
+    }
 
     if (url.pathname === "/api/finance") {
-      return handleFinanceApi(request, env);
+      return withNoIndex(await handleFinanceApi(request, env));
     }
 
     if (url.pathname === "/api/admin/trigger") {
-      return triggerCollection(env);
+      return withNoIndex(await triggerCollection(env));
     }
 
     if (url.pathname === "/api/admin/reset") {
-      return resetCollector(env);
+      return withNoIndex(await resetCollector(env));
     }
 
     if (url.pathname === "/api/status") {
-      return handleStatusApi(env);
+      return withNoIndex(await handleStatusApi(env));
+    }
+
+    if (url.pathname === "/robots.txt") {
+      return new Response(renderRobotsTxt(url), {
+        headers: {
+          "content-type": "text/plain; charset=UTF-8",
+          "cache-control": "public, max-age=3600",
+        },
+      });
+    }
+
+    if (url.pathname === "/sitemap.xml") {
+      return new Response(renderSitemapXml(url), {
+        headers: {
+          "content-type": "application/xml; charset=UTF-8",
+          "cache-control": "public, max-age=3600",
+        },
+      });
     }
 
     if (url.pathname === "/" || url.pathname === "/index.html") {
-      return new Response(renderHtml(), {
+      return new Response(renderHtml(url, env.WEB_ANALYTICS_TOKEN), {
         headers: {
           "content-type": "text/html; charset=UTF-8",
           "cache-control": "no-store",
@@ -855,13 +883,29 @@ function chinaWallClockToUtc(year, month, day, hour, minute, second) {
   return new Date(Date.UTC(year, month - 1, day, hour - 8, minute, second));
 }
 
-function renderHtml() {
+function renderHtml(requestUrl, webAnalyticsToken) {
+  const canonicalUrl = buildCanonicalUrl(requestUrl);
+  const structuredData = renderStructuredData(canonicalUrl);
+  const webAnalyticsScript = renderWebAnalyticsScript(webAnalyticsToken);
   return `<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Capital Flow Replay</title>
+    <title>${escapeHtml(SITE_TITLE)}</title>
+    <meta name="description" content="${escapeHtml(SITE_DESCRIPTION)}" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="theme-color" content="#fafafa" />
+    <link rel="canonical" href="${escapeHtml(canonicalUrl)}" />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:site_name" content="${escapeHtml(SITE_NAME)}" />
+    <meta property="og:title" content="${escapeHtml(SITE_TITLE)}" />
+    <meta property="og:description" content="${escapeHtml(SITE_DESCRIPTION)}" />
+    <meta property="og:url" content="${escapeHtml(canonicalUrl)}" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="${escapeHtml(SITE_TITLE)}" />
+    <meta name="twitter:description" content="${escapeHtml(SITE_DESCRIPTION)}" />
     <script>
       (() => {
         try {
@@ -1839,16 +1883,17 @@ function renderHtml() {
         }
       }
     </style>
+    <script type="application/ld+json">${structuredData}</script>
   </head>
   <body data-loading="true">
     <main class="page">
       <section class="hero">
         <article class="panel hero-copy">
-          <div class="eyebrow">Concept Flow Replay / ${DISPLAY_CONCEPT_COUNT} Signals</div>
-          <h1>把一天的题材资金流<br>拉成可回放的盘面。</h1>
+          <div class="eyebrow">A-Share Concept Flow / ${DISPLAY_CONCEPT_COUNT} Signals</div>
+          <h1>A股概念资金流<br>数据可视化回放。</h1>
           <p class="lead">
-            后台自动采集并按天存储概念板块主力资金流。你现在看到的是净流入 Top ${DEFAULT_FLOW_GROUP_SIZE} 与净流出 Top ${DEFAULT_FLOW_GROUP_SIZE}，
-            可以按交易日切换、拖动到具体时间点，或者直接播放整天的资金迁移过程。
+            后台自动采集并按天存储 A 股概念板块主力资金流。当前页面聚焦净流入 Top ${DEFAULT_FLOW_GROUP_SIZE} 与净流出 Top ${DEFAULT_FLOW_GROUP_SIZE}，
+            支持按交易日查看、日内回放、盘面观察与收盘复盘，帮助你更直观地理解题材轮动和资金迁移。
           </p>
         </article>
         <article class="panel hero-side">
@@ -3699,6 +3744,109 @@ function renderHtml() {
         }
       });
     </script>
+    ${webAnalyticsScript}
   </body>
 </html>`;
+}
+
+function renderRobotsTxt(url) {
+  return [
+    "User-agent: *",
+    "Allow: /",
+    "Disallow: /api/",
+    "Disallow: /api/admin/",
+    `Sitemap: ${PRIMARY_SITE_ORIGIN}/sitemap.xml`,
+  ].join("\n");
+}
+
+function renderSitemapXml(url) {
+  const canonicalUrl = buildCanonicalUrl(url);
+  const lastmod = new Date().toISOString();
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>${escapeXml(canonicalUrl)}</loc>
+    <lastmod>${lastmod}</lastmod>
+    <changefreq>hourly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>`;
+}
+
+function renderStructuredData(canonicalUrl) {
+  return JSON.stringify({
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        name: SITE_NAME,
+        url: canonicalUrl,
+        inLanguage: "zh-CN",
+        description: SITE_DESCRIPTION,
+      },
+      {
+        "@type": "Dataset",
+        name: SITE_TITLE,
+        description: SITE_DESCRIPTION,
+        url: canonicalUrl,
+        inLanguage: "zh-CN",
+        keywords: [
+          "A股",
+          "概念板块",
+          "资金流",
+          "数据可视化",
+          "主力资金",
+          "日内回放",
+          "复盘",
+          "题材",
+        ],
+      },
+    ],
+  });
+}
+
+function buildCanonicalUrl(url) {
+  const canonical = new URL("/", PRIMARY_SITE_URL);
+  return canonical.toString();
+}
+
+function redirectToPrimaryHost(url) {
+  if (url.origin === PRIMARY_SITE_ORIGIN) {
+    return null;
+  }
+
+  const target = new URL(url.pathname + url.search, PRIMARY_SITE_URL);
+  return Response.redirect(target.toString(), 301);
+}
+
+function renderWebAnalyticsScript(token) {
+  const normalized = typeof token === "string" ? token.trim() : "";
+  if (!normalized) {
+    return "";
+  }
+
+  const beaconConfig = JSON.stringify({ token: normalized });
+  return `<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='${beaconConfig}'></script>`;
+}
+
+function withNoIndex(response) {
+  const nextHeaders = new Headers(response.headers);
+  nextHeaders.set("x-robots-tag", API_NOINDEX_VALUE);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: nextHeaders,
+  });
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function escapeXml(value) {
+  return escapeHtml(value).replaceAll("'", "&apos;");
 }

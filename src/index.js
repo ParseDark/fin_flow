@@ -26,8 +26,8 @@ const DAY_SAMPLE_CHUNK_SIZE = 100;
 const RETAIN_DAYS = 7;
 const API_SAMPLE_WINDOW = 180;
 const CHINA_TZ = "Asia/Shanghai";
-const MAX_FLOW_GROUP_SIZE = 30;
-const DEFAULT_FLOW_GROUP_SIZE = 20;
+const MAX_FLOW_GROUP_SIZE = 10;
+const DEFAULT_FLOW_GROUP_SIZE = 10;
 const DISPLAY_CONCEPT_COUNT = DEFAULT_FLOW_GROUP_SIZE * 2;
 
 export default {
@@ -234,12 +234,11 @@ export class CapitalFlowCollector extends DurableObject {
           ? todayKey
           : availableDates.at(-1);
 
-    const allCompactSamples = await readDaySamples(this.ctx.storage, targetDate);
-    if (allCompactSamples.length === 0) {
+    const compactSamples = await readSampledDaySamples(this.ctx.storage, targetDate, API_SAMPLE_WINDOW);
+    if (compactSamples.length === 0) {
       return null;
     }
 
-    const compactSamples = selectApiSamples(allCompactSamples, API_SAMPLE_WINDOW);
     const samples = compactSamples.map(expandSample);
     const latest = await this.ctx.storage.get("latest");
     const tracked = trackedSeriesFromSamples(samples);
@@ -527,22 +526,6 @@ function chunkArray(items, chunkSize) {
   return chunks;
 }
 
-function selectApiSamples(samples, limit) {
-  if (samples.length <= limit) {
-    return samples;
-  }
-
-  const selected = [];
-  const step = (samples.length - 1) / (limit - 1);
-
-  for (let index = 0; index < limit; index += 1) {
-    const sampleIndex = Math.round(index * step);
-    selected.push(samples[sampleIndex]);
-  }
-
-  return selected.filter((sample, index, list) => index === 0 || sample !== list[index - 1]);
-}
-
 async function ensureDayStorageMeta(storage, dateKey) {
   const existingMeta = await storage.get(dayMetaKey(dateKey));
   if (existingMeta) return existingMeta;
@@ -568,6 +551,63 @@ async function readDaySamples(storage, dateKey) {
 
   const chunks = await Promise.all(chunkReads);
   return chunks.flatMap((chunk) => chunk || []);
+}
+
+function buildSampleWindowIndices(totalSamples, limit) {
+  if (totalSamples <= limit) {
+    return Array.from({ length: totalSamples }, (_, index) => index);
+  }
+
+  const indices = [];
+  for (let position = 0; position < limit; position += 1) {
+    const remainingSlots = limit - position - 1;
+    const maxIndexForPosition = totalSamples - remainingSlots - 1;
+    const rawIndex = Math.round((position * (totalSamples - 1)) / (limit - 1));
+    const previousIndex = indices[position - 1] ?? -1;
+    const nextIndex = Math.max(previousIndex + 1, Math.min(rawIndex, maxIndexForPosition));
+    indices.push(nextIndex);
+  }
+
+  return indices;
+}
+
+async function readSampledDaySamples(storage, dateKey, limit) {
+  const meta = await storage.get(dayMetaKey(dateKey));
+  if (!meta || !meta.chunkCount) {
+    const legacySamples = (await storage.get(dayStorageKey(dateKey))) || [];
+    const indices = buildSampleWindowIndices(legacySamples.length, limit);
+    return indices.map((index) => legacySamples[index]).filter(Boolean);
+  }
+
+  const totalSamples = meta.totalSamples || 0;
+  const indices = buildSampleWindowIndices(totalSamples, limit);
+  if (indices.length === 0) {
+    return [];
+  }
+
+  const chunkToOffsets = new Map();
+  for (const index of indices) {
+    const chunkIndex = Math.floor(index / DAY_SAMPLE_CHUNK_SIZE);
+    const offset = index % DAY_SAMPLE_CHUNK_SIZE;
+    if (!chunkToOffsets.has(chunkIndex)) {
+      chunkToOffsets.set(chunkIndex, []);
+    }
+    chunkToOffsets.get(chunkIndex).push(offset);
+  }
+
+  const orderedChunkIndexes = [...chunkToOffsets.keys()].sort((a, b) => a - b);
+  const chunkEntries = await Promise.all(
+    orderedChunkIndexes.map(async (chunkIndex) => [chunkIndex, (await storage.get(dayChunkKey(dateKey, chunkIndex))) || []]),
+  );
+  const chunkMap = new Map(chunkEntries);
+
+  return indices
+    .map((index) => {
+      const chunkIndex = Math.floor(index / DAY_SAMPLE_CHUNK_SIZE);
+      const offset = index % DAY_SAMPLE_CHUNK_SIZE;
+      return chunkMap.get(chunkIndex)?.[offset] || null;
+    })
+    .filter(Boolean);
 }
 
 async function writeDaySamples(storage, dateKey, samples, previousMeta = null) {
@@ -1807,7 +1847,7 @@ function renderHtml() {
           <div class="eyebrow">Concept Flow Replay / ${DISPLAY_CONCEPT_COUNT} Signals</div>
           <h1>把一天的题材资金流<br>拉成可回放的盘面。</h1>
           <p class="lead">
-            后台自动采集并按天存储概念板块主力资金流。你现在看到的是 ${DISPLAY_CONCEPT_COUNT} 个概念的日内轨迹，
+            后台自动采集并按天存储概念板块主力资金流。你现在看到的是净流入 Top ${DEFAULT_FLOW_GROUP_SIZE} 与净流出 Top ${DEFAULT_FLOW_GROUP_SIZE}，
             可以按交易日切换、拖动到具体时间点，或者直接播放整天的资金迁移过程。
           </p>
         </article>
@@ -2068,12 +2108,10 @@ function renderHtml() {
         <div class="chart-head">
           <div>
             <div class="chart-title">日内资金曲线</div>
-            <div class="chart-note">默认展示主力净流入前 ${DEFAULT_FLOW_GROUP_SIZE} 和净流出前 ${DEFAULT_FLOW_GROUP_SIZE} 的概念，可切换到前 10 / 20 / 30。光标所在位置，就是你当前查看的市场切片。</div>
+            <div class="chart-note">当前仅采集并展示主力净流入前 ${DEFAULT_FLOW_GROUP_SIZE} 和净流出前 ${DEFAULT_FLOW_GROUP_SIZE} 的概念。光标所在位置，就是你当前查看的市场切片。</div>
             <div class="chart-stats">
               <span class="chart-filter-tags">
-                <button class="btn-outline size-sm chart-filter-btn" data-filter="limit10">前10</button>
-                <button class="btn-outline size-sm chart-filter-btn is-active" data-filter="limit20">前20</button>
-                <button class="btn-outline size-sm chart-filter-btn" data-filter="limit30">前30</button>
+                <button class="btn-outline size-sm chart-filter-btn is-active" data-filter="limit10">前10</button>
                 <button class="btn-outline size-sm chart-filter-btn" data-filter="top3">关注前三</button>
                 <button class="btn-outline size-sm chart-filter-btn" data-filter="bottom3">关注后三</button>
                 <button class="btn-outline size-sm chart-filter-btn" data-filter="inflow">只看净流入</button>
@@ -2173,7 +2211,7 @@ function renderHtml() {
         timer: null,
         colorMap: {},
         playbackSpeed: 40,
-        chartFilter: "limit20",
+        chartFilter: "limit10",
       };
 
       function setPageLoading(isLoading) {
@@ -2481,8 +2519,6 @@ function renderHtml() {
 
       function limitFromChartFilter(filter) {
         if (filter === "limit10") return 10;
-        if (filter === "limit20") return 20;
-        if (filter === "limit30") return 30;
         return DEFAULT_FLOW_GROUP_SIZE;
       }
 
@@ -3160,9 +3196,7 @@ function renderHtml() {
         } else if (
           state.chartFilter === "top3" ||
           state.chartFilter === "bottom3" ||
-          state.chartFilter === "limit10" ||
-          state.chartFilter === "limit20" ||
-          state.chartFilter === "limit30"
+          state.chartFilter === "limit10"
         ) {
           const visibleCodes = new Set([
             ...filteredInflow.map((item) => item.code),

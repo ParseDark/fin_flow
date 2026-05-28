@@ -176,7 +176,7 @@ export default {
   },
 
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(ensureCollector(env, controller.scheduledTime));
+    ctx.waitUntil(maintainCollector(env, controller.scheduledTime));
   },
 };
 
@@ -243,7 +243,7 @@ export class CapitalFlowCollector extends DurableObject {
 
   async ensureScheduled() {
     const currentAlarm = await this.ctx.storage.getAlarm();
-    if (currentAlarm === null) {
+    if (currentAlarm === null || currentAlarm <= Date.now()) {
       await this.scheduleNext();
     }
   }
@@ -432,6 +432,16 @@ async function handleFinanceApi(request, env) {
   const requestedDate = url.searchParams.get("date");
 
   const stub = getCollectorStub(env);
+  if (!requestedDate) {
+    const statusResponse = await stub.fetch("https://collector.internal/status");
+    if (statusResponse.ok) {
+      const status = await statusResponse.json();
+      if (shouldCollectFromStatus(status)) {
+        await stub.fetch("https://collector.internal/collect");
+      }
+    }
+  }
+
   let response = await stub.fetch(`https://collector.internal/day${requestedDate ? `?date=${requestedDate}` : ""}`);
 
   if (response.status === 404) {
@@ -462,9 +472,39 @@ async function ensureCollector(env, scheduledTime = Date.now()) {
   await stub.fetch(`https://collector.internal/ensure?t=${scheduledTime}`);
 }
 
+async function maintainCollector(env, scheduledTime = Date.now()) {
+  const stub = getCollectorStub(env);
+  await stub.fetch(`https://collector.internal/ensure?t=${scheduledTime}`);
+
+  const statusResponse = await stub.fetch("https://collector.internal/status");
+  if (!statusResponse.ok) return;
+
+  const status = await statusResponse.json();
+  if (shouldCollectFromStatus(status, new Date(scheduledTime))) {
+    await stub.fetch("https://collector.internal/collect");
+  }
+}
+
 function getCollectorStub(env) {
   const id = env.COLLECTOR.idFromName("capital-flow-primary");
   return env.COLLECTOR.get(id);
+}
+
+function shouldCollectFromStatus(status, now = new Date()) {
+  if (!status?.isTradingTime) {
+    return false;
+  }
+
+  if (!status.lastSuccessAt || status.latestSnapshotDate !== status.todayDate) {
+    return true;
+  }
+
+  const lastSuccessAt = new Date(status.lastSuccessAt);
+  if (!Number.isFinite(lastSuccessAt.getTime())) {
+    return true;
+  }
+
+  return now.getTime() - lastSuccessAt.getTime() > COLLECT_INTERVAL_MS * 2;
 }
 
 function summarizeHeadline(list) {
@@ -2322,6 +2362,7 @@ function renderHtml(requestUrl, webAnalyticsToken) {
     <script src="https://code.highcharts.com/12/highcharts.js"></script>
     <script>
       const REFRESH_MS = 30000;
+      const FOREGROUND_REFRESH_DEBOUNCE_MS = 5000;
       const BASE_PLAY_INTERVAL_MS = 100;
       const COLORS = [
         "#38bdf8",
@@ -2348,6 +2389,8 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         colorMap: {},
         playbackSpeed: 40,
         chartFilter: "limit10",
+        foregroundRefreshAt: 0,
+        foregroundRefreshing: false,
       };
 
       function setPageLoading(isLoading) {
@@ -3772,12 +3815,31 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         if (state.data.requestedDate !== state.data.latestDate) return;
         if (state.playing) return;
 
-        const currentDate = state.data.requestedDate;
         const keepAtEnd = state.index >= state.data.samples.length - 1;
-        const ok = await fetchDay(currentDate);
+        const ok = await fetchDay();
         if (!ok) return;
         if (!keepAtEnd) {
           setIndex(Math.min(state.index, state.data.samples.length - 1));
+        }
+      }
+
+      async function refreshOnForeground() {
+        if (!shouldPollLiveData()) return;
+        if (state.foregroundRefreshing) return;
+
+        const now = Date.now();
+        if (now - state.foregroundRefreshAt < FOREGROUND_REFRESH_DEBOUNCE_MS) return;
+
+        state.foregroundRefreshAt = now;
+        state.foregroundRefreshing = true;
+
+        try {
+          await Promise.all([
+            refreshLiveIfNeeded(),
+            fetchStatus(),
+          ]);
+        } finally {
+          state.foregroundRefreshing = false;
         }
       }
 
@@ -3834,6 +3896,14 @@ function renderHtml(requestUrl, webAnalyticsToken) {
           setInterval(fetchStatus, REFRESH_MS);
         }
       });
+
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          refreshOnForeground();
+        }
+      });
+      window.addEventListener("focus", refreshOnForeground);
+      window.addEventListener("pageshow", refreshOnForeground);
     </script>
     ${webAnalyticsScript}
   </body>

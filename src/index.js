@@ -353,6 +353,12 @@ export class CapitalFlowCollector extends DurableObject {
     }
 
     const samples = compactSamples.map(expandSample);
+    const previousDate = previousTradingDateFromAvailableDates(availableDates, targetDate);
+    const previousSamples = previousDate
+      ? (await readSampledDaySamples(this.ctx.storage, previousDate, API_SAMPLE_WINDOW)).map(expandSample)
+      : [];
+    const previousEmotionSeries = buildAlignedPreviousEmotionSeries(samples, previousSamples);
+    const previousNetFlowSeries = buildAlignedPreviousNetFlowSeries(samples, previousSamples);
     const latest = await this.ctx.storage.get("latest");
     const tracked = trackedSeriesFromSamples(samples);
     const sampleTimes = samples.map((item) => formatTimeLabel(item.updatedAt));
@@ -381,6 +387,7 @@ export class CapitalFlowCollector extends DurableObject {
           const all = [...sample.leaders, ...sample.laggards];
           return all.reduce((sum, item) => sum + (item.mainFundDiff || 0), 0);
         }),
+        previousNetFlow: previousNetFlowSeries,
       },
       emotion: samples.at(-1).emotion || {},
       emotionSeries: {
@@ -388,6 +395,9 @@ export class CapitalFlowCollector extends DurableObject {
         balance: samples.map((s) => (s.emotion || {}).balance || null),
         previewChange: samples.map((s) => (s.emotion || {}).previewChange || null),
         previewBalance: samples.map((s) => (s.emotion || {}).previewBalance || null),
+        previousDate,
+        previousDegree: previousEmotionSeries.degree,
+        previousBalance: previousEmotionSeries.balance,
       },
     };
   }
@@ -592,6 +602,115 @@ function expandItem(item) {
     mainFundDiff: item.f,
     leaderStock: item.l,
   };
+}
+
+function previousTradingDateFromAvailableDates(availableDates, targetDate) {
+  const targetIndex = availableDates.indexOf(targetDate);
+  if (targetIndex <= 0) {
+    return null;
+  }
+  return availableDates[targetIndex - 1];
+}
+
+function buildAlignedPreviousEmotionSeries(samples, previousSamples) {
+  if (!previousSamples.length) {
+    return {
+      degree: samples.map(() => null),
+      balance: samples.map(() => null),
+    };
+  }
+
+  const previousPoints = previousSamples
+    .map((sample) => ({
+      second: secondsFromTimeLabel(formatTimeLabel(sample.updatedAt)),
+      degree: (sample.emotion || {}).degree ?? null,
+      balance: (sample.emotion || {}).balance ?? null,
+    }))
+    .filter((point) => point.second != null)
+    .sort((a, b) => a.second - b.second);
+
+  if (!previousPoints.length) {
+    return {
+      degree: samples.map(() => null),
+      balance: samples.map(() => null),
+    };
+  }
+
+  const alignedDegree = [];
+  const alignedBalance = [];
+  let cursor = 0;
+
+  samples.forEach((sample) => {
+    const targetSecond = secondsFromTimeLabel(formatTimeLabel(sample.updatedAt));
+    if (targetSecond == null) {
+      alignedDegree.push(null);
+      alignedBalance.push(null);
+      return;
+    }
+
+    while (
+      cursor + 1 < previousPoints.length &&
+      previousPoints[cursor + 1].second <= targetSecond
+    ) {
+      cursor += 1;
+    }
+
+    const matchedPoint = previousPoints[cursor];
+    if (matchedPoint.second > targetSecond) {
+      alignedDegree.push(null);
+      alignedBalance.push(null);
+      return;
+    }
+
+    alignedDegree.push(matchedPoint.degree);
+    alignedBalance.push(matchedPoint.balance);
+  });
+
+  return {
+    degree: alignedDegree,
+    balance: alignedBalance,
+  };
+}
+
+function buildAlignedPreviousNetFlowSeries(samples, previousSamples) {
+  if (!previousSamples.length) {
+    return samples.map(() => null);
+  }
+
+  const previousPoints = previousSamples
+    .map((sample) => ({
+      second: secondsFromTimeLabel(formatTimeLabel(sample.updatedAt)),
+      value: [...sample.leaders, ...sample.laggards].reduce((sum, item) => sum + (item.mainFundDiff || 0), 0),
+    }))
+    .filter((point) => point.second != null)
+    .sort((a, b) => a.second - b.second);
+
+  if (!previousPoints.length) {
+    return samples.map(() => null);
+  }
+
+  const aligned = [];
+  let cursor = 0;
+
+  samples.forEach((sample) => {
+    const targetSecond = secondsFromTimeLabel(formatTimeLabel(sample.updatedAt));
+    if (targetSecond == null) {
+      aligned.push(null);
+      return;
+    }
+
+    while (
+      cursor + 1 < previousPoints.length &&
+      previousPoints[cursor + 1].second <= targetSecond
+    ) {
+      cursor += 1;
+    }
+
+    const matchedPoint = previousPoints[cursor];
+    aligned.push(matchedPoint.second > targetSecond ? null : matchedPoint.value);
+  });
+
+  return aligned;
 }
 
 async function appendSampleToDay(storage, dateKey, sample) {
@@ -2918,7 +3037,7 @@ function renderHtml(requestUrl, webAnalyticsToken) {
           title: { text: "市场净资金", align: "left", style: { color: "rgba(244,244,245,0.7)", fontSize: "11px", fontWeight: "400" } },
           credits: { enabled: false },
           exporting: { enabled: false },
-          legend: { enabled: false },
+          legend: { enabled: true, align: "right", verticalAlign: "top", layout: "horizontal", itemStyle: { color: "rgba(244,244,245,0.7)", fontSize: "10px" }, itemDistance: 14, symbolRadius: 2, symbolWidth: 14, symbolHeight: 3, margin: 0 },
           xAxis: {
             categories: [],
             tickLength: 0,
@@ -2936,11 +3055,20 @@ function renderHtml(requestUrl, webAnalyticsToken) {
             plotLines: [{ value: 0, color: "rgba(250,250,250,0.2)", width: 1, zIndex: 4 }],
           },
           tooltip: {
+            shared: true,
             backgroundColor: "rgba(9,9,11,0.96)",
             borderColor: "rgba(244,244,245,0.08)",
             style: { color: "#fafafa", fontSize: "11px" },
             useHTML: true,
-            formatter() { return '<div style="font-size:12px;font-weight:600;margin-bottom:4px;">' + this.x + '</div><div style="display:flex;justify-content:space-between;gap:12px;font-size:11px;"><span>净资金</span><span style="font-weight:500;">' + formatFund(this.y) + '</span></div>'; },
+            formatter() {
+              return '<div style="font-size:12px;font-weight:600;margin-bottom:4px;">' + this.x + '</div>' +
+                (this.points || []).map((point) =>
+                  '<div style="display:flex;justify-content:space-between;gap:12px;font-size:11px;">' +
+                    '<span>' + point.series.name + '</span>' +
+                    '<span style="font-weight:500;">' + formatFund(point.y) + '</span>' +
+                  '</div>'
+                ).join("");
+            },
           },
           plotOptions: {
             column: {
@@ -2954,8 +3082,18 @@ function renderHtml(requestUrl, webAnalyticsToken) {
           series: [{
             id: "netflow-bars",
             type: "column",
-            name: "净资金",
+            name: "当日净资金",
             zIndex: 1,
+            data: [],
+          }, {
+            id: "netflow-prev",
+            type: "spline",
+            name: "昨日净资金",
+            color: "rgba(191,219,254,0.42)",
+            lineColor: "rgba(191,219,254,0.42)",
+            lineWidth: 1.25,
+            dashStyle: "ShortDot",
+            zIndex: 2,
             data: [],
           }],
         });
@@ -3009,7 +3147,7 @@ function renderHtml(requestUrl, webAnalyticsToken) {
                   }
                   return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:11px;line-height:1.4;">' +
                     '<span>' + p.series.name + '</span>' +
-                    '<span style="font-weight:500;">' + (p.series.options.id === "emo-balance" || p.series.options.id === "emo-preview" ? p.y + "万亿" : p.y) + '</span>' +
+                    '<span style="font-weight:500;">' + (isEmotionVolumeSeries(p.series.options.id) ? p.y + "万亿" : p.y) + '</span>' +
                     '</div>';
                 }).join("");
             },
@@ -3020,7 +3158,11 @@ function renderHtml(requestUrl, webAnalyticsToken) {
           series: [{
             id: "emo-degree", type: "spline", name: "市场温度", yAxis: 0, color: "#f59e0b", lineWidth: 2, zIndex: 2, data: [],
           }, {
+            id: "emo-degree-prev", type: "spline", name: "昨日温度", yAxis: 0, color: "rgba(245,158,11,0.42)", lineWidth: 1.25, dashStyle: "ShortDot", zIndex: 1, data: [],
+          }, {
             id: "emo-balance", type: "area", name: "成交量", yAxis: 1, color: "rgba(59,130,246,0.2)", lineColor: "rgba(59,130,246,0.6)", lineWidth: 1.5, fillOpacity: 0.15, zIndex: 1, data: [],
+          }, {
+            id: "emo-balance-prev", type: "spline", name: "昨日成交量", yAxis: 1, color: "rgba(147,197,253,0.38)", lineColor: "rgba(147,197,253,0.42)", lineWidth: 1.25, dashStyle: "ShortDot", zIndex: 0, data: [],
           }, {
             id: "emo-preview", type: "spline", name: "预估成交量", yAxis: 1, color: "#93c5fd", lineColor: "#93c5fd", lineWidth: 2, dashStyle: "ShortDash", zIndex: 3, data: [],
           }, {
@@ -3199,6 +3341,12 @@ function renderHtml(requestUrl, webAnalyticsToken) {
           series: [],
         });
         return chart;
+      }
+
+      function isEmotionVolumeSeries(seriesId) {
+        return seriesId === "emo-balance" ||
+          seriesId === "emo-balance-prev" ||
+          seriesId === "emo-preview";
       }
 
       function visiblePlaybackData(dataPoints) {
@@ -3598,14 +3746,19 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         // Net flow bar chart (separate chart below)
         const nfChart = ensureNetFlowChart();
         const netFlowData = data.chart.netFlow || [];
+        const previousNetFlowData = data.chart.previousNetFlow || [];
         const netFlowVisible = visiblePlaybackData(netFlowData);
+        const previousNetFlowVisible = visiblePlaybackData(previousNetFlowData);
         nfChart.xAxis[0].setCategories(data.sampleTimes, false);
-        const nfSeries = nfChart.series[0];
+        const nfSeries = nfChart.series.find((s) => s.options.id === "netflow-bars");
+        const nfPrevSeries = nfChart.series.find((s) => s.options.id === "netflow-prev");
         nfSeries.setData(netFlowVisible.map((v, i) => ({
           x: i,
           y: v,
           color: v != null ? (v >= 0 ? "rgba(22,163,74,0.5)" : "rgba(220,38,38,0.5)") : "transparent",
         })), false);
+        nfPrevSeries.setVisible(previousNetFlowVisible.some((value) => value != null), false);
+        nfPrevSeries.setData(previousNetFlowVisible, false);
         nfChart.redraw();
         // Draw cursor line on net flow chart too
         nfChart.xAxis[0].removePlotLine("nf-playhead");
@@ -3620,13 +3773,21 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         const emoData = data.emotionSeries || { degree: [], balance: [] };
         emoChart.xAxis[0].setCategories(data.sampleTimes, false);
         const degreeSeries = emoChart.series.find((s) => s.options.id === "emo-degree");
+        const degreePrevSeries = emoChart.series.find((s) => s.options.id === "emo-degree-prev");
         const balanceSeries = emoChart.series.find((s) => s.options.id === "emo-balance");
+        const balancePrevSeries = emoChart.series.find((s) => s.options.id === "emo-balance-prev");
         const previewSeries = emoChart.series.find((s) => s.options.id === "emo-preview");
         const anchorUpSeries = emoChart.series.find((s) => s.options.id === "emo-anchor-up");
         const anchorDownSeries = emoChart.series.find((s) => s.options.id === "emo-anchor-down");
         const anchorFlatSeries = emoChart.series.find((s) => s.options.id === "emo-anchor-flat");
+        const previousDegreeData = visiblePlaybackData(emoData.previousDegree || []);
+        const previousBalanceData = visiblePlaybackData(emoData.previousBalance || []);
         degreeSeries.setData(visiblePlaybackData(emoData.degree), false);
+        degreePrevSeries.setVisible(previousDegreeData.some((value) => value != null), false);
+        degreePrevSeries.setData(previousDegreeData, false);
         balanceSeries.setData(visiblePlaybackData(emoData.balance), false);
+        balancePrevSeries.setVisible(previousBalanceData.some((value) => value != null), false);
+        balancePrevSeries.setData(previousBalanceData, false);
         previewSeries.setData(visiblePlaybackData(emoData.previewBalance || []), false);
         const anchorScatter = buildAnchorScatterData(data);
         anchorUpSeries.setData(anchorScatter.filter((item) => item.direction === "up"), false);

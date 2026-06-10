@@ -475,12 +475,7 @@ export class CapitalFlowCollector extends DurableObject {
         const stock = sample.plateStocks?.[conceptCode]?.stocks?.find((entry) => entry.code === item.code);
         return stock ? stock.fundflow : null;
       }),
-    })).sort((a, b) => {
-      if (a.isCore !== b.isCore) return a.isCore ? -1 : 1;
-      const av = Math.abs(latestDefinedServerValue(a.data) || 0);
-      const bv = Math.abs(latestDefinedServerValue(b.data) || 0);
-      return bv - av;
-    });
+    }));
 
     return {
       requestedDate: targetDate,
@@ -491,8 +486,7 @@ export class CapitalFlowCollector extends DurableObject {
       series,
       samples: samples.map((sample) => ({
         stocks: (sample.plateStocks?.[conceptCode]?.stocks || [])
-          .filter((item) => stockMeta.has(item.code))
-          .sort((a, b) => Math.abs(b.fundflow || 0) - Math.abs(a.fundflow || 0)),
+          .filter((item) => stockMeta.has(item.code)),
       })),
     };
   }
@@ -709,7 +703,6 @@ async function fetchPlateStocks(conceptCode) {
     return stocks
       .map(normalizePlateStock)
       .filter((item) => item.code && item.name && item.fundflow != null)
-      .sort((a, b) => Math.abs(b.fundflow || 0) - Math.abs(a.fundflow || 0))
       .slice(0, MAX_PLATE_STOCKS);
   } catch {
     return [];
@@ -828,14 +821,6 @@ function conceptNameFromSamples(samples, conceptCode) {
       : [...(samples[index].leaders || []), ...(samples[index].laggards || [])];
     const concept = concepts.find((item) => item.code === conceptCode);
     if (concept?.name) return concept.name;
-  }
-  return null;
-}
-
-function latestDefinedServerValue(dataPoints) {
-  for (let index = dataPoints.length - 1; index >= 0; index -= 1) {
-    const value = dataPoints[index];
-    if (value != null) return value;
   }
   return null;
 }

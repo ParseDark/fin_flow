@@ -6,6 +6,9 @@ const API_URL =
 const REVERSE_API_URL =
   "https://x-quote.cls.cn/web_quote/plate/plate_list?app=CailianpressWeb&os=web&page=1&rever=0&sv=8.4.6&type=concept&way=main_fund_diff&sign=4bb3a71eb50aaeff3c50f908503cda5a";
 
+const PLATE_STOCKS_API_URL =
+  "https://x-quote.cls.cn/web_quote/plate/stocks?app=CailianpressWeb&os=web&rever=1&sv=8.7.9&way=last_px";
+
 const EMOTION_API_URL =
   "https://x-quote.cls.cn/v2/quote/a/stock/emotion?app=CailianpressWeb&os=web&sv=7.7.5&sign=bf0f367462d8cd70917ba5eab3853bce";
 const ANCHOR_API_URL =
@@ -28,6 +31,7 @@ const API_SAMPLE_WINDOW = 180;
 const CHINA_TZ = "Asia/Shanghai";
 const MAX_FLOW_GROUP_SIZE = 10;
 const DEFAULT_FLOW_GROUP_SIZE = 10;
+const MAX_PLATE_STOCKS = 12;
 const DISPLAY_CONCEPT_COUNT = DEFAULT_FLOW_GROUP_SIZE * 2;
 const SITE_NAME = "题材资金流回放";
 const SITE_TITLE = `A股概念资金流数据可视化 | ${SITE_NAME}`;
@@ -122,6 +126,10 @@ export default {
 
     if (url.pathname === "/api/finance") {
       return withNoIndex(await handleFinanceApi(request, env));
+    }
+
+    if (url.pathname === "/api/plate-stocks") {
+      return withNoIndex(await handlePlateStocksApi(request, env));
     }
 
     if (url.pathname === "/api/admin/trigger") {
@@ -219,6 +227,20 @@ export class CapitalFlowCollector extends DurableObject {
       });
     }
 
+    if (url.pathname === "/plate-stocks") {
+      const requestedDate = url.searchParams.get("date");
+      const conceptCode = url.searchParams.get("code");
+      const payload = await this.getPlateStocksPayload(requestedDate, conceptCode);
+      if (!payload) {
+        return Response.json({ error: "No stock data for selected concept" }, { status: 404 });
+      }
+      return Response.json(payload, {
+        headers: {
+          "cache-control": "public, max-age=5, stale-while-revalidate=10",
+        },
+      });
+    }
+
     if (url.pathname === "/status") {
       const status = await this.getStatus();
       return Response.json(status, {
@@ -286,6 +308,7 @@ export class CapitalFlowCollector extends DurableObject {
     }
     const allPlates = [...merged.values()];
     const groups = buildFlowGroups(allPlates);
+    const plateStocks = await fetchTrackedPlateStocks(groups.ranking);
 
     let emotion = null;
     if (emotionRes && emotionRes.ok) {
@@ -321,6 +344,7 @@ export class CapitalFlowCollector extends DurableObject {
       laggards: groups.laggards,
       concepts: groups.ranking,
       ranking: groups.ranking,
+      plateStocks,
       emotion: emotion || {},
     };
 
@@ -371,8 +395,8 @@ export class CapitalFlowCollector extends DurableObject {
       latestDate: getChinaDateKey(new Date(latest?.updatedAt || samples.at(-1).updatedAt)),
       sampleTimes,
       initialIndex: samples.length - 1,
-      latestSnapshot: latest || samples.at(-1),
-      samples,
+      latestSnapshot: publicSnapshot(latest || samples.at(-1)),
+      samples: samples.map(publicSample),
       anchors,
       chart: {
         series: tracked.map((item) => ({
@@ -399,6 +423,75 @@ export class CapitalFlowCollector extends DurableObject {
         previousDegree: previousEmotionSeries.degree,
         previousBalance: previousEmotionSeries.balance,
       },
+    };
+  }
+
+  async getPlateStocksPayload(requestedDate, conceptCode) {
+    if (!conceptCode) {
+      return null;
+    }
+
+    const availableDates = ((await this.ctx.storage.get("availableDates")) || []).sort();
+    if (availableDates.length === 0) {
+      return null;
+    }
+
+    const todayKey = getChinaDateKey(new Date());
+    const targetDate =
+      requestedDate && availableDates.includes(requestedDate)
+        ? requestedDate
+        : availableDates.includes(todayKey)
+          ? todayKey
+          : availableDates.at(-1);
+
+    const samples = (await readSampledDaySamples(this.ctx.storage, targetDate, API_SAMPLE_WINDOW)).map(expandSample);
+    if (samples.length === 0) {
+      return null;
+    }
+
+    const sampleTimes = samples.map((item) => formatTimeLabel(item.updatedAt));
+    const latestWithStocks = [...samples].reverse().find((sample) => sample.plateStocks?.[conceptCode]);
+    const plate = latestWithStocks?.plateStocks?.[conceptCode];
+    if (!plate?.stocks?.length) {
+      return {
+        requestedDate: targetDate,
+        code: conceptCode,
+        name: conceptNameFromSamples(samples, conceptCode) || conceptCode,
+        sampleTimes,
+        initialIndex: samples.length - 1,
+        series: [],
+        samples: samples.map(() => ({ stocks: [] })),
+      };
+    }
+
+    const stockMeta = new Map(plate.stocks.map((item) => [item.code, item]));
+    const series = plate.stocks.map((item) => ({
+      code: item.code,
+      name: item.name,
+      isCore: item.isCore,
+      data: samples.map((sample) => {
+        const stock = sample.plateStocks?.[conceptCode]?.stocks?.find((entry) => entry.code === item.code);
+        return stock ? stock.fundflow : null;
+      }),
+    })).sort((a, b) => {
+      if (a.isCore !== b.isCore) return a.isCore ? -1 : 1;
+      const av = Math.abs(latestDefinedServerValue(a.data) || 0);
+      const bv = Math.abs(latestDefinedServerValue(b.data) || 0);
+      return bv - av;
+    });
+
+    return {
+      requestedDate: targetDate,
+      code: conceptCode,
+      name: plate.name || conceptNameFromSamples(samples, conceptCode) || conceptCode,
+      sampleTimes,
+      initialIndex: samples.length - 1,
+      series,
+      samples: samples.map((sample) => ({
+        stocks: (sample.plateStocks?.[conceptCode]?.stocks || [])
+          .filter((item) => stockMeta.has(item.code))
+          .sort((a, b) => Math.abs(b.fundflow || 0) - Math.abs(a.fundflow || 0)),
+      })),
     };
   }
 
@@ -460,6 +553,17 @@ async function handleFinanceApi(request, env) {
   }
 
   return response;
+}
+
+async function handlePlateStocksApi(request, env) {
+  const url = new URL(request.url);
+  const requestedDate = url.searchParams.get("date");
+  const conceptCode = url.searchParams.get("code");
+  const stub = getCollectorStub(env);
+  const params = new URLSearchParams();
+  if (requestedDate) params.set("date", requestedDate);
+  if (conceptCode) params.set("code", conceptCode);
+  return stub.fetch(`https://collector.internal/plate-stocks?${params.toString()}`);
 }
 
 async function triggerCollection(env) {
@@ -562,6 +666,59 @@ function buildFlowGroups(list) {
   return { leaders: topInflow, laggards: topOutflow, ranking };
 }
 
+async function fetchTrackedPlateStocks(concepts) {
+  const entries = await Promise.all(
+    concepts.map(async (concept) => {
+      const stocks = await fetchPlateStocks(concept.code);
+      return [concept.code, {
+        name: concept.name,
+        stocks,
+      }];
+    }),
+  );
+
+  return Object.fromEntries(entries.filter(([, value]) => value.stocks.length > 0));
+}
+
+async function fetchPlateStocks(conceptCode) {
+  if (!conceptCode) return [];
+
+  const url = `${PLATE_STOCKS_API_URL}&secu_code=${encodeURIComponent(conceptCode)}`;
+  try {
+    const response = await fetch(url, {
+      headers: {
+        ...REQUEST_HEADERS,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const json = await response.json();
+    const stocks = Array.isArray(json?.data?.stocks) ? json.data.stocks : [];
+    return stocks
+      .map(normalizePlateStock)
+      .filter((item) => item.code && item.name && item.fundflow != null)
+      .sort((a, b) => Math.abs(b.fundflow || 0) - Math.abs(a.fundflow || 0))
+      .slice(0, MAX_PLATE_STOCKS);
+  } catch {
+    return [];
+  }
+}
+
+function normalizePlateStock(item) {
+  return {
+    name: item.secu_name,
+    code: item.secu_code,
+    change: toNullableNumber(item.change),
+    lastPx: toNullableNumber(item.last_px),
+    fundflow: toNullableNumber(item.fundflow),
+    isCore: item.is_core === 1,
+  };
+}
+
 function compactSample(snapshot) {
   return {
     updatedAt: snapshot.updatedAt,
@@ -569,6 +726,7 @@ function compactSample(snapshot) {
     leaders: snapshot.leaders.map(compactItem),
     laggards: snapshot.laggards.map(compactItem),
     concepts: snapshot.concepts.map(compactItem),
+    ps: compactPlateStocks(snapshot.plateStocks || {}),
     em: snapshot.emotion || {},
   };
 }
@@ -590,6 +748,7 @@ function expandSample(sample) {
     leaders: sample.leaders.map(expandItem),
     laggards: sample.laggards.map(expandItem),
     concepts: (sample.concepts || []).map(expandItem),
+    plateStocks: expandPlateStocks(sample.ps || {}),
     emotion: sample.em || {},
   };
 }
@@ -602,6 +761,75 @@ function expandItem(item) {
     mainFundDiff: item.f,
     leaderStock: item.l,
   };
+}
+
+function compactPlateStocks(plateStocks) {
+  return Object.fromEntries(
+    Object.entries(plateStocks).map(([conceptCode, value]) => [
+      conceptCode,
+      {
+        n: value.name,
+        s: (value.stocks || []).map((item) => ({
+          n: item.name,
+          c: item.code,
+          ch: item.change,
+          p: item.lastPx,
+          f: item.fundflow,
+          core: item.isCore ? 1 : 0,
+        })),
+      },
+    ]),
+  );
+}
+
+function expandPlateStocks(plateStocks) {
+  return Object.fromEntries(
+    Object.entries(plateStocks).map(([conceptCode, value]) => [
+      conceptCode,
+      {
+        name: value.n,
+        stocks: (value.s || []).map((item) => ({
+          name: item.n,
+          code: item.c,
+          change: item.ch,
+          lastPx: item.p,
+          fundflow: item.f,
+          isCore: item.core === 1,
+        })),
+      },
+    ]),
+  );
+}
+
+function publicSample(sample) {
+  if (!sample) return null;
+  const { plateStocks, ...rest } = sample;
+  return rest;
+}
+
+function publicSnapshot(snapshot) {
+  if (!snapshot) return null;
+  const { plateStocks, ...rest } = snapshot;
+  return rest;
+}
+
+function conceptNameFromSamples(samples, conceptCode) {
+  for (let index = samples.length - 1; index >= 0; index -= 1) {
+    const concepts = samples[index].concepts?.length
+      ? samples[index].concepts
+      : [...(samples[index].leaders || []), ...(samples[index].laggards || [])];
+    const concept = concepts.find((item) => item.code === conceptCode);
+    if (concept?.name) return concept.name;
+  }
+  return null;
+}
+
+function latestDefinedServerValue(dataPoints) {
+  for (let index = dataPoints.length - 1; index >= 0; index -= 1) {
+    const value = dataPoints[index];
+    if (value != null) return value;
+  }
+  return null;
 }
 
 function previousTradingDateFromAvailableDates(availableDates, targetDate) {
@@ -916,6 +1144,11 @@ async function deleteDaySamples(storage, dateKey) {
 
 function toNumber(value) {
   return typeof value === "number" ? value : 0;
+}
+
+function toNullableNumber(value) {
+  const numberValue = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
 }
 
 function parseChineseAmount(value) {
@@ -1972,6 +2205,144 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         font-size: 11px;
       }
 
+      .concept-item {
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .concept-action {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .drawer-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 80;
+        display: none;
+        background: rgba(9, 9, 11, 0.42);
+        backdrop-filter: blur(4px);
+      }
+
+      .stock-drawer {
+        position: fixed;
+        top: 0;
+        right: 0;
+        z-index: 90;
+        display: flex;
+        flex-direction: column;
+        width: min(760px, 100vw);
+        height: 100vh;
+        padding: 18px;
+        border-left: 1px solid var(--line);
+        background: var(--panel-strong);
+        box-shadow: -24px 0 60px rgba(0, 0, 0, 0.18);
+        transform: translateX(100%);
+        transition: transform 0.22s ease;
+      }
+
+      body.drawer-open {
+        overflow: hidden;
+      }
+
+      body.drawer-open .drawer-backdrop {
+        display: block;
+      }
+
+      body.drawer-open .stock-drawer {
+        transform: translateX(0);
+      }
+
+      .stock-drawer-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--line-soft);
+      }
+
+      .stock-drawer-title {
+        margin: 0;
+        font-size: 24px;
+        line-height: 1.15;
+        letter-spacing: -0.03em;
+      }
+
+      .stock-drawer-meta {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      #stock-drawer-chart {
+        height: 440px;
+        margin-top: 14px;
+        border: 1px solid rgba(24, 24, 27, 0.14);
+        border-radius: 20px;
+        background:
+          linear-gradient(180deg, rgba(24, 24, 27, 0.96), rgba(39, 39, 42, 0.94)),
+          radial-gradient(circle at top, rgba(255,255,255,0.04), transparent 38%);
+      }
+
+      .dark #stock-drawer-chart {
+        border-color: rgba(244, 244, 245, 0.08);
+        background:
+          linear-gradient(180deg, rgba(9, 9, 11, 0.98), rgba(24, 24, 27, 0.96)),
+          radial-gradient(circle at top, rgba(255,255,255,0.05), transparent 38%);
+      }
+
+      .stock-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 8px;
+        margin-top: 12px;
+        overflow-y: auto;
+        padding-right: 2px;
+      }
+
+      .stock-row {
+        display: grid;
+        gap: 4px;
+        padding: 10px 12px;
+        border: 1px solid var(--line-soft);
+        border-radius: 12px;
+        background: rgba(63, 63, 70, 0.04);
+      }
+
+      .stock-row-main {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .stock-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .stock-code {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .stock-empty {
+        margin-top: 14px;
+        padding: 28px;
+        border: 1px dashed var(--line);
+        border-radius: 16px;
+        color: var(--muted);
+        text-align: center;
+        font-size: 13px;
+      }
+
       .muted { color: var(--muted); }
       .up { color: var(--up); }
       .down { color: var(--down); }
@@ -2124,6 +2495,14 @@ function renderHtml(requestUrl, webAnalyticsToken) {
 
         #chart {
           height: 380px;
+        }
+
+        .stock-drawer {
+          width: 100vw;
+        }
+
+        #stock-drawer-chart {
+          height: 360px;
         }
       }
     </style>
@@ -2478,6 +2857,21 @@ function renderHtml(requestUrl, webAnalyticsToken) {
       </section>
     </main>
 
+    <div class="drawer-backdrop" id="stock-drawer-backdrop" aria-hidden="true"></div>
+    <aside class="stock-drawer" id="stock-drawer" aria-hidden="true" aria-labelledby="stock-drawer-title">
+      <header class="stock-drawer-head">
+        <div>
+          <h2 class="stock-drawer-title" id="stock-drawer-title">板块个股分时</h2>
+          <div class="stock-drawer-meta" id="stock-drawer-meta">选择一个概念板块查看个股资金流。</div>
+        </div>
+        <button class="btn-icon-outline size-8" id="stock-drawer-close" type="button" aria-label="关闭板块个股分时">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </header>
+      <div id="stock-drawer-chart"></div>
+      <div class="stock-list" id="stock-drawer-list"></div>
+    </aside>
+
     <script src="https://code.highcharts.com/12/highcharts.js"></script>
     <script>
       const REFRESH_MS = 30000;
@@ -2510,6 +2904,10 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         chartFilter: "limit10",
         foregroundRefreshAt: 0,
         foregroundRefreshing: false,
+        selectedConceptCode: null,
+        stockDrawerData: null,
+        stockDrawerLoading: false,
+        stockDrawerCache: {},
       };
 
       function setPageLoading(isLoading) {
@@ -2536,9 +2934,13 @@ function renderHtml(requestUrl, webAnalyticsToken) {
       const latestBtn = document.getElementById("latest-btn");
       const timeline = document.getElementById("timeline");
       const speedButtons = Array.from(document.querySelectorAll(".speed-btn"));
+      const stockDrawer = document.getElementById("stock-drawer");
+      const stockDrawerBackdrop = document.getElementById("stock-drawer-backdrop");
+      const stockDrawerClose = document.getElementById("stock-drawer-close");
       let chart;
       let netFlowChart;
       let emotionChart;
+      let stockDrawerChart;
       let dateController;
       function initCombobox({ trigger, popover, listbox, valueInput, filterInput, onSelect }) {
         let open = false;
@@ -2704,6 +3106,15 @@ function renderHtml(requestUrl, webAnalyticsToken) {
 
       function formatPercent(value) {
         return (value * 100).toFixed(2) + "%";
+      }
+
+      function escapeHtmlText(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
       }
 
       function formatAnchorDirection(direction) {
@@ -3210,6 +3621,230 @@ function renderHtml(requestUrl, webAnalyticsToken) {
           }],
         });
         return emotionChart;
+      }
+
+      function ensureStockDrawerChart() {
+        if (stockDrawerChart) return stockDrawerChart;
+        stockDrawerChart = Highcharts.chart("stock-drawer-chart", {
+          chart: {
+            backgroundColor: "transparent",
+            animation: false,
+            spacing: [12, 8, 8, 8],
+          },
+          title: { text: null },
+          credits: { enabled: false },
+          exporting: { enabled: false },
+          legend: {
+            enabled: true,
+            align: "left",
+            verticalAlign: "bottom",
+            itemStyle: { color: "rgba(244,244,245,0.72)", fontSize: "11px" },
+            itemHoverStyle: { color: "#fafafa" },
+            maxHeight: 86,
+          },
+          xAxis: {
+            categories: [],
+            tickLength: 0,
+            lineColor: "rgba(244,244,245,0.14)",
+            gridLineWidth: 1,
+            gridLineColor: "rgba(244,244,245,0.05)",
+            labels: {
+              formatter() {
+                const label = String(this.value || "");
+                const parts = label.split(":");
+                const mm = parts[1];
+                if (this.pos === 0 || this.pos === this.axis.categories.length - 1) return parts[0] + ":" + mm;
+                if (mm === "00" || mm === "30") return parts[0] + ":" + mm;
+                return "";
+              },
+              style: { color: "rgba(244,244,245,0.62)" },
+            },
+          },
+          yAxis: {
+            title: { text: null },
+            gridLineWidth: 1,
+            gridLineColor: "rgba(244,244,245,0.08)",
+            labels: {
+              style: { color: "rgba(244,244,245,0.62)" },
+              formatter() { return formatFund(this.value); },
+            },
+            plotLines: [{ value: 0, color: "rgba(250,250,250,0.24)", width: 1.2, zIndex: 4 }],
+          },
+          tooltip: {
+            shared: true,
+            backgroundColor: "rgba(9,9,11,0.96)",
+            borderColor: "rgba(244,244,245,0.08)",
+            style: { color: "#fafafa" },
+            useHTML: true,
+            formatter() {
+              const rows = (this.points || [])
+                .filter((point) => point.y != null)
+                .sort((a, b) => Math.abs(b.y) - Math.abs(a.y))
+                .map((point) =>
+                  '<div style="display:flex;justify-content:space-between;gap:14px;font-size:11px;line-height:1.55;">' +
+                    '<span style="color:' + point.color + ';">● ' + escapeHtmlText(point.series.name) + '</span>' +
+                    '<span style="color:' + (point.y >= 0 ? '#dc2626' : '#16a34a') + ';font-weight:600;">' + formatFund(point.y) + '</span>' +
+                  '</div>'
+                ).join("");
+              return '<div style="font-size:13px;font-weight:600;margin-bottom:6px;">' + this.x + '</div>' + rows;
+            },
+          },
+          plotOptions: {
+            series: {
+              animation: { duration: 260 },
+              marker: { enabled: false },
+              lineWidth: 1.8,
+              opacity: 0.84,
+              connectNulls: false,
+              states: { inactive: { opacity: 0.14 } },
+            },
+          },
+          series: [],
+        });
+        return stockDrawerChart;
+      }
+
+      function currentConcept() {
+        const sample = state.data?.samples?.[state.index];
+        const concepts = sample?.concepts?.length ? sample.concepts : [...(sample?.leaders || []), ...(sample?.laggards || [])];
+        return concepts.find((item) => item.code === state.selectedConceptCode) || null;
+      }
+
+      function stockSnapshotForConcept(conceptCode, index = state.index) {
+        if (state.stockDrawerData?.code !== conceptCode) return null;
+        return state.stockDrawerData.samples?.[index] || null;
+      }
+
+      function buildStockSeries(conceptCode) {
+        if (state.stockDrawerData?.code !== conceptCode) return [];
+        return state.stockDrawerData.series || [];
+      }
+
+      async function fetchStockDrawerData(conceptCode) {
+        const date = state.data?.requestedDate || "";
+        const cacheKey = date + ":" + conceptCode;
+        if (state.stockDrawerCache[cacheKey]) {
+          state.stockDrawerData = state.stockDrawerCache[cacheKey];
+          return state.stockDrawerData;
+        }
+
+        const params = new URLSearchParams();
+        if (date) params.set("date", date);
+        params.set("code", conceptCode);
+
+        const response = await fetch("/api/plate-stocks?" + params.toString(), { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("加载板块个股分时失败");
+        }
+
+        const payload = await response.json();
+        state.stockDrawerCache[cacheKey] = payload;
+        state.stockDrawerData = payload;
+        return payload;
+      }
+
+      async function openStockDrawer(conceptCode) {
+        state.selectedConceptCode = conceptCode;
+        state.stockDrawerData = null;
+        state.stockDrawerLoading = true;
+        stockDrawer.setAttribute("aria-hidden", "false");
+        document.body.classList.add("drawer-open");
+        renderStockDrawer();
+        try {
+          await fetchStockDrawerData(conceptCode);
+        } catch {
+          state.stockDrawerData = { code: conceptCode, name: currentConcept()?.name || conceptCode, series: [], samples: [] };
+        } finally {
+          state.stockDrawerLoading = false;
+          renderStockDrawer();
+          setTimeout(() => {
+            if (stockDrawerChart) stockDrawerChart.reflow();
+          }, 240);
+        }
+      }
+
+      function closeStockDrawer() {
+        document.body.classList.remove("drawer-open");
+        stockDrawer.setAttribute("aria-hidden", "true");
+        state.selectedConceptCode = null;
+        state.stockDrawerData = null;
+        state.stockDrawerLoading = false;
+      }
+
+      function renderStockDrawer() {
+        if (!state.data || !state.selectedConceptCode) return;
+        const concept = currentConcept();
+        const snapshot = stockSnapshotForConcept(state.selectedConceptCode);
+        const series = buildStockSeries(state.selectedConceptCode);
+        const title = concept?.name || state.stockDrawerData?.name || "板块个股";
+        const meta = document.getElementById("stock-drawer-meta");
+        const list = document.getElementById("stock-drawer-list");
+        const stockChart = ensureStockDrawerChart();
+
+        document.getElementById("stock-drawer-title").textContent = title + " 个股资金流";
+        if (state.stockDrawerLoading) {
+          meta.textContent = "正在加载板块个股分时...";
+        } else {
+          meta.textContent = (state.data.sampleTimes[state.index] || "--:--:--") + " · " + series.length + " 只个股 · 按当前板块样本同步回放";
+        }
+        stockChart.xAxis[0].setCategories(state.data.sampleTimes, false);
+
+        series.forEach((item) => {
+          const existing = stockChart.series.find((s) => s.options.id === item.code);
+          const color = stableColorForCode(item.code);
+          const options = {
+            id: item.code,
+            type: "spline",
+            name: item.name + (item.isCore ? " 核心" : ""),
+            color,
+            zoneAxis: "y",
+            zones: [
+              { value: 0, color: "#22c55e" },
+              { color },
+            ],
+            data: visiblePlaybackData(item.data),
+          };
+          if (existing) {
+            existing.update({ name: options.name, color, zones: options.zones }, false);
+            existing.setData(options.data, false, { duration: 220 });
+          } else {
+            stockChart.addSeries(options, false, { duration: 220 });
+          }
+        });
+
+        stockChart.series
+          .filter((chartSeries) => !series.some((item) => item.code === chartSeries.options.id))
+          .forEach((chartSeries) => chartSeries.remove(false));
+
+        stockChart.xAxis[0].removePlotLine("stock-playhead");
+        stockChart.xAxis[0].addPlotLine({ id: "stock-playhead", value: state.index, color: "#ffd36b", width: 1.5, zIndex: 5, dashStyle: "Dash" });
+        stockChart.redraw();
+
+        if (state.stockDrawerLoading) {
+          list.innerHTML = '<div class="stock-empty">正在加载板块个股分时...</div>';
+          return;
+        }
+
+        const currentStocks = snapshot?.stocks || [];
+        if (currentStocks.length === 0) {
+          list.innerHTML = '<div class="stock-empty">当前样本暂未采集到这个板块的个股资金流。</div>';
+          return;
+        }
+
+        list.innerHTML = currentStocks.map((item) => {
+          const flowClass = (item.fundflow || 0) >= 0 ? "up" : "down";
+          const changeClass = (item.change || 0) >= 0 ? "up" : "down";
+          return '<article class="stock-row">' +
+            '<div class="stock-row-main">' +
+              '<div class="stock-name">' + escapeHtmlText(item.name) + (item.isCore ? ' <span class="gold">核心</span>' : '') + '</div>' +
+              '<div class="' + flowClass + '" style="font-size:12px;font-weight:600;">' + formatFund(item.fundflow || 0) + '</div>' +
+            '</div>' +
+            '<div class="stock-row-main">' +
+              '<span class="stock-code">' + escapeHtmlText(item.code) + '</span>' +
+              '<span class="' + changeClass + '" style="font-size:12px;">' + formatPercent(item.change || 0) + '</span>' +
+            '</div>' +
+          '</article>';
+        }).join("");
       }
 
       function ensureChart() {
@@ -3854,9 +4489,9 @@ function renderHtml(requestUrl, webAnalyticsToken) {
               const valueClass = item.mainFundDiff >= 0 ? "up" : "down";
               const changeClass = item.change >= 0 ? "up" : "down";
               const sideLabel = item.mainFundDiff >= 0 ? "净流入" : "净流出";
-              return '<article class="card concept-item group/item ' + flowClass + '" data-tooltip="' + item.name + ' · ' + sideLabel + '" data-side="top">' +
+              return '<article class="card concept-item group/item ' + flowClass + '" role="button" tabindex="0" data-concept-code="' + escapeHtmlText(item.code) + '" data-tooltip="' + escapeHtmlText(item.name) + ' · ' + sideLabel + '" data-side="top">' +
                 '<header class="concept-top">' +
-                  '<div><div class="concept-rank">#' + String(idx).padStart(2, "0") + '</div><h2 class="concept-name">' + item.name + '</h2></div>' +
+                  '<div><div class="concept-rank">#' + String(idx).padStart(2, "0") + '</div><h2 class="concept-name">' + escapeHtmlText(item.name) + '</h2></div>' +
                   '<span class="' + valueClass + '" style="font-weight:600;font-size:11px;">' + sideLabel + '</span>' +
                 '</header>' +
                 '<section>' +
@@ -3864,7 +4499,8 @@ function renderHtml(requestUrl, webAnalyticsToken) {
                   '<div class="' + changeClass + '" style="font-size:12px;">涨跌幅 ' + formatPercent(item.change) + '</div>' +
                 '</section>' +
                 '<footer class="concept-foot">' +
-                  '<p class="muted">代表股 ' + item.leaderStock + '</p>' +
+                  '<p class="muted">代表股 ' + escapeHtmlText(item.leaderStock) + '</p>' +
+                  '<span class="concept-action">查看个股分时</span>' +
                 '</footer>' +
               '</article>';
             }).join("") +
@@ -3935,6 +4571,9 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         renderMetrics(sample);
         renderConceptGrid(sample);
         renderAnchorStream(state.data);
+        if (state.selectedConceptCode) {
+          renderStockDrawer();
+        }
       }
 
       async function fetchDay(date, options = {}) {
@@ -4046,6 +4685,28 @@ function renderHtml(requestUrl, webAnalyticsToken) {
           filterButtons.forEach((b) => b.classList.toggle("is-active", b.dataset.filter === state.chartFilter));
           if (state.data) setIndex(state.index);
         });
+      });
+
+      document.getElementById("concepts-grid").addEventListener("click", (event) => {
+        const item = event.target.closest(".concept-item[data-concept-code]");
+        if (!item) return;
+        openStockDrawer(item.dataset.conceptCode);
+      });
+
+      document.getElementById("concepts-grid").addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        const item = event.target.closest(".concept-item[data-concept-code]");
+        if (!item) return;
+        event.preventDefault();
+        openStockDrawer(item.dataset.conceptCode);
+      });
+
+      stockDrawerClose.addEventListener("click", closeStockDrawer);
+      stockDrawerBackdrop.addEventListener("click", closeStockDrawer);
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && state.selectedConceptCode) {
+          closeStockDrawer();
+        }
       });
 
       fetchDay(undefined, { showLoading: true }).then((ok) => {
@@ -4205,6 +4866,10 @@ function buildCanonicalUrl(url, forcedPath = null) {
 }
 
 function redirectToPrimaryHost(url) {
+  if (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1") {
+    return null;
+  }
+
   if (url.origin === PRIMARY_SITE_ORIGIN) {
     return null;
   }

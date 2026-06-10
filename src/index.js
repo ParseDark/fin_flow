@@ -2284,14 +2284,19 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         font-size: 12px;
       }
 
+      .stock-chart-wrap {
+        position: relative;
+        margin-top: 14px;
+      }
+
       #stock-drawer-chart {
         height: 440px;
-        margin-top: 14px;
         border: 1px solid rgba(24, 24, 27, 0.14);
         border-radius: 20px;
         background:
           linear-gradient(180deg, rgba(24, 24, 27, 0.96), rgba(39, 39, 42, 0.94)),
           radial-gradient(circle at top, rgba(255,255,255,0.04), transparent 38%);
+        transition: opacity 0.16s ease;
       }
 
       .dark #stock-drawer-chart {
@@ -2299,6 +2304,66 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         background:
           linear-gradient(180deg, rgba(9, 9, 11, 0.98), rgba(24, 24, 27, 0.96)),
           radial-gradient(circle at top, rgba(255,255,255,0.05), transparent 38%);
+      }
+
+      .stock-loading-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        border-radius: 20px;
+        background: linear-gradient(180deg, rgba(9,9,11,0.72), rgba(24,24,27,0.82));
+        backdrop-filter: blur(6px);
+      }
+
+      .stock-drawer.is-loading #stock-drawer-chart {
+        opacity: 0.42;
+      }
+
+      .stock-drawer.is-loading .stock-loading-overlay {
+        display: flex;
+      }
+
+      .stock-loading-card {
+        display: grid;
+        gap: 14px;
+        width: min(360px, 100%);
+        padding: 18px;
+        border: 1px solid rgba(244,244,245,0.1);
+        border-radius: 16px;
+        background: rgba(255,255,255,0.05);
+      }
+
+      .stock-loading-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: rgba(244,244,245,0.88);
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .stock-spinner {
+        width: 18px;
+        height: 18px;
+        border: 2px solid rgba(244,244,245,0.22);
+        border-top-color: #ffd36b;
+        border-radius: 999px;
+        animation: stock-spin 0.8s linear infinite;
+      }
+
+      .stock-loading-lines {
+        display: grid;
+        gap: 8px;
+      }
+
+      @keyframes stock-spin {
+        to {
+          transform: rotate(360deg);
+        }
       }
 
       .stock-list {
@@ -2349,6 +2414,11 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         color: var(--muted);
         text-align: center;
         font-size: 13px;
+      }
+
+      .stock-row.is-skeleton {
+        min-height: 58px;
+        pointer-events: none;
       }
 
       .muted { color: var(--muted); }
@@ -2876,7 +2946,22 @@ function renderHtml(requestUrl, webAnalyticsToken) {
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
         </button>
       </header>
-      <div id="stock-drawer-chart"></div>
+      <div class="stock-chart-wrap">
+        <div id="stock-drawer-chart"></div>
+        <div class="stock-loading-overlay" id="stock-loading-overlay" aria-hidden="true">
+          <div class="stock-loading-card">
+            <div class="stock-loading-head">
+              <span class="stock-spinner" aria-hidden="true"></span>
+              <span>正在加载板块个股分时</span>
+            </div>
+            <div class="stock-loading-lines" aria-hidden="true">
+              <div class="skeleton-line wide"></div>
+              <div class="skeleton-line md"></div>
+              <div class="skeleton-line wide"></div>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="stock-list" id="stock-drawer-list"></div>
     </aside>
 
@@ -3756,6 +3841,7 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         state.stockDrawerData = null;
         state.stockDrawerLoading = true;
         stockDrawer.setAttribute("aria-hidden", "false");
+        stockDrawer.classList.add("is-loading");
         document.body.classList.add("drawer-open");
         renderStockDrawer();
         try {
@@ -3764,6 +3850,7 @@ function renderHtml(requestUrl, webAnalyticsToken) {
           state.stockDrawerData = { code: conceptCode, name: currentConcept()?.name || conceptCode, series: [], samples: [] };
         } finally {
           state.stockDrawerLoading = false;
+          stockDrawer.classList.remove("is-loading");
           renderStockDrawer();
           setTimeout(() => {
             if (stockDrawerChart) stockDrawerChart.reflow();
@@ -3777,6 +3864,7 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         state.selectedConceptCode = null;
         state.stockDrawerData = null;
         state.stockDrawerLoading = false;
+        stockDrawer.classList.remove("is-loading");
       }
 
       function renderStockDrawer() {
@@ -3829,7 +3917,12 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         stockChart.redraw();
 
         if (state.stockDrawerLoading) {
-          list.innerHTML = '<div class="stock-empty">正在加载板块个股分时...</div>';
+          list.innerHTML = Array.from({ length: 6 }).map(() =>
+            '<article class="stock-row is-skeleton">' +
+              '<div class="skeleton-line wide"></div>' +
+              '<div class="skeleton-line md"></div>' +
+            '</article>'
+          ).join("");
           return;
         }
 

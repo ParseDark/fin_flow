@@ -32,6 +32,8 @@ const CHINA_TZ = "Asia/Shanghai";
 const MAX_FLOW_GROUP_SIZE = 10;
 const DEFAULT_FLOW_GROUP_SIZE = 10;
 const MAX_PLATE_STOCKS = 12;
+const PLATE_STOCKS_BATCH_SIZE = 5;
+const PLATE_STOCKS_REQUEST_TIMEOUT_MS = 4500;
 const DISPLAY_CONCEPT_COUNT = DEFAULT_FLOW_GROUP_SIZE * 2;
 const SITE_NAME = "题材资金流回放";
 const SITE_TITLE = `A股概念资金流数据可视化 | ${SITE_NAME}`;
@@ -667,15 +669,20 @@ function buildFlowGroups(list) {
 }
 
 async function fetchTrackedPlateStocks(concepts) {
-  const entries = await Promise.all(
-    concepts.map(async (concept) => {
-      const stocks = await fetchPlateStocks(concept.code);
-      return [concept.code, {
-        name: concept.name,
-        stocks,
-      }];
-    }),
-  );
+  const entries = [];
+  for (let index = 0; index < concepts.length; index += PLATE_STOCKS_BATCH_SIZE) {
+    const batch = concepts.slice(index, index + PLATE_STOCKS_BATCH_SIZE);
+    const batchEntries = await Promise.all(
+      batch.map(async (concept) => {
+        const stocks = await fetchPlateStocks(concept.code);
+        return [concept.code, {
+          name: concept.name,
+          stocks,
+        }];
+      }),
+    );
+    entries.push(...batchEntries);
+  }
 
   return Object.fromEntries(entries.filter(([, value]) => value.stocks.length > 0));
 }
@@ -690,6 +697,7 @@ async function fetchPlateStocks(conceptCode) {
         ...REQUEST_HEADERS,
         "Content-Type": "application/json",
       },
+      signal: AbortSignal.timeout(PLATE_STOCKS_REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {

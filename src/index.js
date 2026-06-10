@@ -7,7 +7,7 @@ const REVERSE_API_URL =
   "https://x-quote.cls.cn/web_quote/plate/plate_list?app=CailianpressWeb&os=web&page=1&rever=0&sv=8.4.6&type=concept&way=main_fund_diff&sign=4bb3a71eb50aaeff3c50f908503cda5a";
 
 const PLATE_STOCKS_API_URL =
-  "https://x-quote.cls.cn/web_quote/plate/stocks?app=CailianpressWeb&os=web&page=1&rever=1&sv=8.7.9&way=fundflow";
+  "https://x-quote.cls.cn/web_quote/plate/stocks?app=CailianpressWeb&os=web&page=1&sv=8.7.9&way=fundflow";
 
 const EMOTION_API_URL =
   "https://x-quote.cls.cn/v2/quote/a/stock/emotion?app=CailianpressWeb&os=web&sv=7.7.5&sign=bf0f367462d8cd70917ba5eab3853bce";
@@ -668,7 +668,7 @@ async function fetchTrackedPlateStocks(concepts) {
     const batch = concepts.slice(index, index + PLATE_STOCKS_BATCH_SIZE);
     const batchEntries = await Promise.all(
       batch.map(async (concept) => {
-        const stocks = await fetchPlateStocks(concept.code);
+        const stocks = await fetchPlateStocks(concept.code, concept.mainFundDiff);
         return [concept.code, {
           name: concept.name,
           stocks,
@@ -681,10 +681,11 @@ async function fetchTrackedPlateStocks(concepts) {
   return Object.fromEntries(entries.filter(([, value]) => value.stocks.length > 0));
 }
 
-async function fetchPlateStocks(conceptCode) {
+async function fetchPlateStocks(conceptCode, conceptFundFlow = 0) {
   if (!conceptCode) return [];
 
-  const url = `${PLATE_STOCKS_API_URL}&secu_code=${encodeURIComponent(conceptCode)}`;
+  const rever = conceptFundFlow < 0 ? 0 : 1;
+  const url = `${PLATE_STOCKS_API_URL}&rever=${rever}&secu_code=${encodeURIComponent(conceptCode)}`;
   try {
     const response = await fetch(url, {
       headers: {

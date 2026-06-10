@@ -7,7 +7,7 @@ const REVERSE_API_URL =
   "https://x-quote.cls.cn/web_quote/plate/plate_list?app=CailianpressWeb&os=web&page=1&rever=0&sv=8.4.6&type=concept&way=main_fund_diff&sign=4bb3a71eb50aaeff3c50f908503cda5a";
 
 const PLATE_STOCKS_API_URL =
-  "https://x-quote.cls.cn/web_quote/plate/stocks?app=CailianpressWeb&os=web&page=1&rever=1&sv=8.7.9&way=fundflow&sign=d72103666c40bc1c4b8dc6e78fe439ad";
+  "https://x-quote.cls.cn/web_quote/plate/stocks?app=CailianpressWeb&os=web&page=1&rever=1&sv=8.7.9&way=fundflow";
 
 const EMOTION_API_URL =
   "https://x-quote.cls.cn/v2/quote/a/stock/emotion?app=CailianpressWeb&os=web&sv=7.7.5&sign=bf0f367462d8cd70917ba5eab3853bce";

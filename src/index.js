@@ -684,7 +684,8 @@ async function fetchTrackedPlateStocks(concepts) {
 async function fetchPlateStocks(conceptCode, conceptFundFlow = 0) {
   if (!conceptCode) return [];
 
-  const rever = conceptFundFlow < 0 ? 0 : 1;
+  const isOutflowConcept = conceptFundFlow < 0;
+  const rever = isOutflowConcept ? 0 : 1;
   const url = `${PLATE_STOCKS_API_URL}&rever=${rever}&secu_code=${encodeURIComponent(conceptCode)}`;
   try {
     const response = await fetch(url, {
@@ -704,6 +705,7 @@ async function fetchPlateStocks(conceptCode, conceptFundFlow = 0) {
     return stocks
       .map(normalizePlateStock)
       .filter((item) => item.code && item.name && item.fundflow != null)
+      .filter((item) => !isOutflowConcept || item.fundflow < 0)
       .slice(0, MAX_PLATE_STOCKS);
   } catch {
     return [];

@@ -23,7 +23,7 @@ const REQUEST_HEADERS = {
   "User-Agent": "Mozilla/5.0",
 };
 
-const COLLECT_INTERVAL_MS = 20 * 1000;
+const COLLECT_INTERVAL_MS = 30 * 1000;
 const DAILY_SAMPLE_LIMIT = 1500;
 const DAY_SAMPLE_CHUNK_SIZE = 100;
 const RETAIN_DAYS = 7;

@@ -2401,9 +2401,35 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         font-weight: 600;
       }
 
+      .stock-title-line {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+
+      .stock-title-line .stock-name {
+        flex: 1;
+      }
+
       .stock-code {
         color: var(--muted);
         font-size: 11px;
+      }
+
+      .stock-tag {
+        flex-shrink: 0;
+        padding: 1px 6px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 600;
+        line-height: 1.5;
+      }
+
+      .stock-tag.core {
+        color: #fde68a;
+        border: 1px solid rgba(250, 204, 21, 0.34);
+        background: rgba(250, 204, 21, 0.12);
       }
 
       .stock-empty {
@@ -3891,7 +3917,7 @@ function renderHtml(requestUrl, webAnalyticsToken) {
           const options = {
             id: item.code,
             type: "spline",
-            name: item.name + (item.isCore ? " 核心" : ""),
+            name: item.name,
             color,
             zoneAxis: "y",
             zones: [
@@ -3937,7 +3963,10 @@ function renderHtml(requestUrl, webAnalyticsToken) {
           const changeClass = (item.change || 0) >= 0 ? "up" : "down";
           return '<article class="stock-row">' +
             '<div class="stock-row-main">' +
-              '<div class="stock-name">' + escapeHtmlText(item.name) + (item.isCore ? ' <span class="gold">核心</span>' : '') + '</div>' +
+              '<div class="stock-title-line">' +
+                '<span class="stock-name">' + escapeHtmlText(item.name) + '</span>' +
+                (item.isCore ? '<span class="stock-tag core">核心</span>' : '') +
+              '</div>' +
               '<div class="' + flowClass + '" style="font-size:12px;font-weight:600;">' + formatFund(item.fundflow || 0) + '</div>' +
             '</div>' +
             '<div class="stock-row-main">' +

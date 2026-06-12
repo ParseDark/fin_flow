@@ -3828,10 +3828,11 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         return state.stockDrawerData.series || [];
       }
 
-      async function fetchStockDrawerData(conceptCode) {
+      async function fetchStockDrawerData(conceptCode, options = {}) {
+        const { force = false } = options;
         const date = state.data?.requestedDate || "";
         const cacheKey = date + ":" + conceptCode;
-        if (state.stockDrawerCache[cacheKey]) {
+        if (!force && state.stockDrawerCache[cacheKey]) {
           state.stockDrawerData = state.stockDrawerCache[cacheKey];
           return state.stockDrawerData;
         }
@@ -4697,10 +4698,11 @@ function renderHtml(requestUrl, webAnalyticsToken) {
       }
 
       async function fetchDay(date, options = {}) {
-        const { showLoading = false } = options;
+        const { showLoading = false, preserveIndex = false } = options;
         if (showLoading) setPageLoading(true);
 
         try {
+          const previousIndex = state.index;
           const query = date ? "?date=" + encodeURIComponent(date) : "";
           const response = await fetch("/api/finance" + query, { cache: "no-store" });
           if (!response.ok) {
@@ -4710,7 +4712,9 @@ function renderHtml(requestUrl, webAnalyticsToken) {
           const data = await response.json();
           buildColorMap(data);
           state.data = data;
-          state.index = data.initialIndex;
+          state.index = preserveIndex
+            ? Math.min(previousIndex, Math.max(0, data.samples.length - 1))
+            : data.initialIndex;
 
           if (data.availableDates.length > 0) {
             renderDateOptions(data.availableDates, data.requestedDate);
@@ -4718,6 +4722,18 @@ function renderHtml(requestUrl, webAnalyticsToken) {
           syncUrl();
 
           timeline.max = String(Math.max(0, data.samples.length - 1));
+          if (state.selectedConceptCode) {
+            try {
+              await fetchStockDrawerData(state.selectedConceptCode, { force: true });
+            } catch {
+              state.stockDrawerData = {
+                code: state.selectedConceptCode,
+                name: currentConcept()?.name || state.selectedConceptCode,
+                series: [],
+                samples: [],
+              };
+            }
+          }
           renderChart(data);
           setIndex(state.index);
           updateSliderPaint();
@@ -4736,11 +4752,7 @@ function renderHtml(requestUrl, webAnalyticsToken) {
         if (state.playing) return;
 
         const keepAtEnd = state.index >= state.data.samples.length - 1;
-        const ok = await fetchDay();
-        if (!ok) return;
-        if (!keepAtEnd) {
-          setIndex(Math.min(state.index, state.data.samples.length - 1));
-        }
+        await fetchDay(undefined, { preserveIndex: !keepAtEnd });
       }
 
       async function refreshOnForeground() {

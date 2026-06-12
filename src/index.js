@@ -25,7 +25,8 @@ const REQUEST_HEADERS = {
 
 const COLLECT_INTERVAL_MS = 30 * 1000;
 const DAILY_SAMPLE_LIMIT = 1500;
-const DAY_SAMPLE_CHUNK_SIZE = 100;
+const DAY_SAMPLE_CHUNK_SIZE = 10;
+const LEGACY_DAY_SAMPLE_CHUNK_SIZE = 100;
 const RETAIN_DAYS = 7;
 const API_SAMPLE_WINDOW = 180;
 const CHINA_TZ = "Asia/Shanghai";
@@ -1024,7 +1025,14 @@ function chunkArray(items, chunkSize) {
 
 async function ensureDayStorageMeta(storage, dateKey) {
   const existingMeta = await storage.get(dayMetaKey(dateKey));
-  if (existingMeta) return existingMeta;
+  if (existingMeta) {
+    if (existingMeta.chunkSize === DAY_SAMPLE_CHUNK_SIZE) {
+      return existingMeta;
+    }
+
+    const legacySamples = await readDaySamplesWithMeta(storage, dateKey, existingMeta);
+    return writeDaySamples(storage, dateKey, legacySamples.slice(-DAILY_SAMPLE_LIMIT), existingMeta);
+  }
 
   const legacySamples = (await storage.get(dayStorageKey(dateKey))) || [];
   if (legacySamples.length === 0) {
@@ -1040,13 +1048,18 @@ async function readDaySamples(storage, dateKey) {
     return (await storage.get(dayStorageKey(dateKey))) || [];
   }
 
+  return readDaySamplesWithMeta(storage, dateKey, meta);
+}
+
+async function readDaySamplesWithMeta(storage, dateKey, meta) {
+  const chunkSize = meta.chunkSize || LEGACY_DAY_SAMPLE_CHUNK_SIZE;
   const chunkReads = [];
   for (let index = 0; index < meta.chunkCount; index += 1) {
     chunkReads.push(storage.get(dayChunkKey(dateKey, index)));
   }
 
   const chunks = await Promise.all(chunkReads);
-  return chunks.flatMap((chunk) => chunk || []);
+  return chunks.flatMap((chunk) => chunk || []).slice(-(meta.totalSamples || chunks.length * chunkSize));
 }
 
 function buildSampleWindowIndices(totalSamples, limit) {
@@ -1081,10 +1094,11 @@ async function readSampledDaySamples(storage, dateKey, limit) {
     return [];
   }
 
+  const chunkSize = meta.chunkSize || LEGACY_DAY_SAMPLE_CHUNK_SIZE;
   const chunkToOffsets = new Map();
   for (const index of indices) {
-    const chunkIndex = Math.floor(index / DAY_SAMPLE_CHUNK_SIZE);
-    const offset = index % DAY_SAMPLE_CHUNK_SIZE;
+    const chunkIndex = Math.floor(index / chunkSize);
+    const offset = index % chunkSize;
     if (!chunkToOffsets.has(chunkIndex)) {
       chunkToOffsets.set(chunkIndex, []);
     }
@@ -1099,8 +1113,9 @@ async function readSampledDaySamples(storage, dateKey, limit) {
 
   return indices
     .map((index) => {
-      const chunkIndex = Math.floor(index / DAY_SAMPLE_CHUNK_SIZE);
-      const offset = index % DAY_SAMPLE_CHUNK_SIZE;
+      const chunkSize = meta.chunkSize || LEGACY_DAY_SAMPLE_CHUNK_SIZE;
+      const chunkIndex = Math.floor(index / chunkSize);
+      const offset = index % chunkSize;
       return chunkMap.get(chunkIndex)?.[offset] || null;
     })
     .filter(Boolean);
@@ -1120,6 +1135,7 @@ async function writeDaySamples(storage, dateKey, samples, previousMeta = null) {
   const nextMeta = {
     chunkCount: chunks.length,
     totalSamples: trimmed.length,
+    chunkSize: DAY_SAMPLE_CHUNK_SIZE,
   };
 
   await storage.put(dayMetaKey(dateKey), nextMeta);

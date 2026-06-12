@@ -3655,8 +3655,9 @@ function renderHtml(requestUrl, webAnalyticsToken) {
             borderColor: "rgba(244,244,245,0.08)",
             style: { color: "#fafafa", fontSize: "11px" },
             formatter() {
+              const points = this.points || [];
               return '<div style="font-size:12px;font-weight:600;margin-bottom:4px;">' + this.x + '</div>' +
-                this.points.map((p) => {
+                points.map((p) => {
                   if (p.series.options.id.startsWith("emo-anchor")) {
                     return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:11px;line-height:1.4;">' +
                       '<span>' + (p.point.name || p.series.name) + '</span>' +
@@ -4030,9 +4031,10 @@ function renderHtml(requestUrl, webAnalyticsToken) {
             style: { color: "#fafafa" },
             useHTML: true,
             formatter() {
-              const pts = this.points.filter((p) => p.series.options.id !== "net-flow-bars" && !p.series.options.id?.startsWith("conc-"));
-              const concIn = this.points.find((p) => p.series.options.id === "conc-inflow");
-              const concOut = this.points.find((p) => p.series.options.id === "conc-outflow");
+              const points = this.points || [];
+              const pts = points.filter((p) => p.series.options.id !== "net-flow-bars" && !p.series.options.id?.startsWith("conc-"));
+              const concIn = points.find((p) => p.series.options.id === "conc-inflow");
+              const concOut = points.find((p) => p.series.options.id === "conc-outflow");
               const inflowPts = pts.filter((p) => p.y > 0).sort((a, b) => b.y - a.y);
               const outflowPts = pts.filter((p) => p.y < 0).sort((a, b) => a.y - b.y);
 

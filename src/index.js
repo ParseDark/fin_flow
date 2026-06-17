@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
-import { Hono } from "hono";
+import { createApp } from "./app";
+import { STATIC_PAGES } from "./static-pages";
 
 const API_URL =
   "https://x-quote.cls.cn/web_quote/plate/plate_list?app=CailianpressWeb&os=web&page=1&rever=1&sv=8.4.6&type=concept&way=main_fund_diff&sign=2cfab3ce449fe7f69f25e951003ed082";
@@ -43,150 +44,21 @@ const SITE_DESCRIPTION = "提供 A 股概念板块资金流数据可视化，聚
 const API_NOINDEX_VALUE = "noindex, nofollow, noarchive";
 const PRIMARY_SITE_URL = "https://fin-flow.lingsbot.online";
 const PRIMARY_SITE_ORIGIN = new URL(PRIMARY_SITE_URL).origin;
-const STATIC_PAGES = {
-  "/about": {
-    title: "关于本站 | 题材资金流回放",
-    description: "了解题材资金流回放的定位、适合人群和使用场景，帮助你更高效地做 A 股概念板块观察与复盘。",
-    heading: "关于题材资金流回放",
-    intro: "这是一个面向 A 股交易观察与复盘的轻量工具站，聚焦概念板块主力资金流的数据可视化与日内回放。",
-    sections: [
-      {
-        title: "这个站解决什么问题",
-        paragraphs: [
-          "盘中看题材轮动，常见问题不是看不到数据，而是很难把一天内的资金迁移过程串起来。本站把概念板块净流入和净流出的变化按时间采样保存下来，让你可以按交易日回看。",
-          "它更适合做盘面观察、收盘复盘和思路验证，而不是替代完整行情终端。",
-        ],
-      },
-      {
-        title: "适合谁使用",
-        paragraphs: [
-          "如果你关注 A 股短线题材、概念板块联动、主力资金变化，或者希望用更直观的方式复盘盘面，这个站会比较合适。",
-        ],
-      },
-    ],
-  },
-  "/guide/a-share-concept-flow": {
-    title: "A股概念资金流怎么看 | 题材资金流回放",
-    description: "从净流入、净流出、题材轮动和日内回放角度，理解 A 股概念板块资金流数据的观察方法。",
-    heading: "A股概念资金流怎么看",
-    intro: "看概念板块资金流，不是只盯某个时点的涨跌，而是看板块之间的资金切换节奏、持续性和集中度。",
-    sections: [
-      {
-        title: "先看净流入与净流出",
-        paragraphs: [
-          "净流入靠前，说明该板块在当前阶段获得更多主力资金关注；净流出靠前，则说明资金在撤离或切换。两个方向要结合着看，才能知道市场是在扩散还是收缩。",
-        ],
-      },
-      {
-        title: "再看日内回放",
-        paragraphs: [
-          "单一快照容易误判。真正有价值的是观察一个概念板块能否在多个时点持续保持强势，还是只在某个时间窗口被短暂拉升。",
-          "通过日内回放，可以更直观地看到题材轮动、分歧转一致、高潮后回落等过程。",
-        ],
-      },
-      {
-        title: "结合集中度理解盘面",
-        paragraphs: [
-          "如果资金高度集中在少数概念，说明短线抱团明显；如果资金分布更分散，往往意味着市场主线不够明确，轮动更快。",
-        ],
-      },
-    ],
-  },
-  "/methodology": {
-    title: "数据口径与方法说明 | 题材资金流回放",
-    description: "查看本站关于 A 股概念板块资金流的数据来源、采样方式、展示范围和使用边界。",
-    heading: "数据口径与方法说明",
-    intro: "为了兼顾盘中可用性、数据体积和回放体验，本站对概念板块资金流做了有限采样和筛选。",
-    sections: [
-      {
-        title: "采样范围",
-        paragraphs: [
-          "当前默认采集并展示概念板块主力资金净流入 Top 10 和净流出 Top 10。这个范围更利于观察主线和资金切换，也能减少无效噪声。",
-        ],
-      },
-      {
-        title: "时间粒度",
-        paragraphs: [
-          "系统按固定间隔抓取盘中样本，并按交易日存储，供页面进行日内回放。回放结果更适合观察趋势和结构变化，而不是精确还原每一笔成交。",
-        ],
-      },
-      {
-        title: "使用边界",
-        paragraphs: [
-          "本站展示的是概念板块层面的观察视角，不构成投资建议。建议结合个股走势、成交额、情绪指标和新闻催化综合判断。",
-        ],
-      },
-    ],
-  },
-};
 
-const app = new Hono();
-
-app.use("*", async (c, next) => {
-  const redirectResponse = redirectToPrimaryHost(new URL(c.req.url));
-  if (redirectResponse) {
-    return redirectResponse;
-  }
-
-  await next();
+const app = createApp({
+  staticPages: STATIC_PAGES,
+  redirectToPrimaryHost,
+  withNoIndex,
+  handleFinanceApi,
+  handlePlateStocksApi,
+  triggerCollection,
+  resetCollector,
+  handleStatusApi,
+  renderRobotsTxt,
+  renderSitemapXml,
+  renderHtml,
+  renderStaticPage,
 });
-
-app.get("/api/finance", async (c) => withNoIndex(await handleFinanceApi(c.req.raw, c.env)));
-
-app.get("/api/plate-stocks", async (c) => withNoIndex(await handlePlateStocksApi(c.req.raw, c.env)));
-
-app.get("/api/admin/trigger", async (c) => withNoIndex(await triggerCollection(c.env)));
-
-app.get("/api/admin/reset", async (c) => withNoIndex(await resetCollector(c.env)));
-
-app.get("/api/status", async (c) => withNoIndex(await handleStatusApi(c.env)));
-
-app.get("/robots.txt", (c) => {
-  const url = new URL(c.req.url);
-  return new Response(renderRobotsTxt(url), {
-    headers: {
-      "content-type": "text/plain; charset=UTF-8",
-      "cache-control": "public, max-age=3600",
-    },
-  });
-});
-
-app.get("/sitemap.xml", (c) => {
-  const url = new URL(c.req.url);
-  return new Response(renderSitemapXml(url), {
-    headers: {
-      "content-type": "application/xml; charset=UTF-8",
-      "cache-control": "public, max-age=3600",
-    },
-  });
-});
-
-function renderIndexResponse(c) {
-  const url = new URL(c.req.url);
-  return new Response(renderHtml(url, c.env.WEB_ANALYTICS_TOKEN), {
-    headers: {
-      "content-type": "text/html; charset=UTF-8",
-      "cache-control": "no-store",
-    },
-  });
-}
-
-app.get("/", renderIndexResponse);
-app.get("/index.html", renderIndexResponse);
-
-for (const [pathname, page] of Object.entries(STATIC_PAGES)) {
-  app.get(pathname, (c) => {
-    const url = new URL(c.req.url);
-    return new Response(renderStaticPage(url, c.env.WEB_ANALYTICS_TOKEN, page), {
-      headers: {
-        "content-type": "text/html; charset=UTF-8",
-        "cache-control": "public, max-age=300",
-      },
-    });
-  });
-}
-
-app.notFound(() => new Response("Not found", { status: 404 }));
 
 export default {
   fetch: app.fetch,

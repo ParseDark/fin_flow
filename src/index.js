@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { Hono } from "hono";
 
 const API_URL =
   "https://x-quote.cls.cn/web_quote/plate/plate_list?app=CailianpressWeb&os=web&page=1&rever=1&sv=8.4.6&type=concept&way=main_fund_diff&sign=2cfab3ce449fe7f69f25e951003ed082";
@@ -119,72 +120,76 @@ const STATIC_PAGES = {
   },
 };
 
+const app = new Hono();
+
+app.use("*", async (c, next) => {
+  const redirectResponse = redirectToPrimaryHost(new URL(c.req.url));
+  if (redirectResponse) {
+    return redirectResponse;
+  }
+
+  await next();
+});
+
+app.get("/api/finance", async (c) => withNoIndex(await handleFinanceApi(c.req.raw, c.env)));
+
+app.get("/api/plate-stocks", async (c) => withNoIndex(await handlePlateStocksApi(c.req.raw, c.env)));
+
+app.get("/api/admin/trigger", async (c) => withNoIndex(await triggerCollection(c.env)));
+
+app.get("/api/admin/reset", async (c) => withNoIndex(await resetCollector(c.env)));
+
+app.get("/api/status", async (c) => withNoIndex(await handleStatusApi(c.env)));
+
+app.get("/robots.txt", (c) => {
+  const url = new URL(c.req.url);
+  return new Response(renderRobotsTxt(url), {
+    headers: {
+      "content-type": "text/plain; charset=UTF-8",
+      "cache-control": "public, max-age=3600",
+    },
+  });
+});
+
+app.get("/sitemap.xml", (c) => {
+  const url = new URL(c.req.url);
+  return new Response(renderSitemapXml(url), {
+    headers: {
+      "content-type": "application/xml; charset=UTF-8",
+      "cache-control": "public, max-age=3600",
+    },
+  });
+});
+
+function renderIndexResponse(c) {
+  const url = new URL(c.req.url);
+  return new Response(renderHtml(url, c.env.WEB_ANALYTICS_TOKEN), {
+    headers: {
+      "content-type": "text/html; charset=UTF-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+app.get("/", renderIndexResponse);
+app.get("/index.html", renderIndexResponse);
+
+for (const [pathname, page] of Object.entries(STATIC_PAGES)) {
+  app.get(pathname, (c) => {
+    const url = new URL(c.req.url);
+    return new Response(renderStaticPage(url, c.env.WEB_ANALYTICS_TOKEN, page), {
+      headers: {
+        "content-type": "text/html; charset=UTF-8",
+        "cache-control": "public, max-age=300",
+      },
+    });
+  });
+}
+
+app.notFound(() => new Response("Not found", { status: 404 }));
+
 export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    const redirectResponse = redirectToPrimaryHost(url);
-    if (redirectResponse) {
-      return redirectResponse;
-    }
-
-    if (url.pathname === "/api/finance") {
-      return withNoIndex(await handleFinanceApi(request, env));
-    }
-
-    if (url.pathname === "/api/plate-stocks") {
-      return withNoIndex(await handlePlateStocksApi(request, env));
-    }
-
-    if (url.pathname === "/api/admin/trigger") {
-      return withNoIndex(await triggerCollection(env));
-    }
-
-    if (url.pathname === "/api/admin/reset") {
-      return withNoIndex(await resetCollector(env));
-    }
-
-    if (url.pathname === "/api/status") {
-      return withNoIndex(await handleStatusApi(env));
-    }
-
-    if (url.pathname === "/robots.txt") {
-      return new Response(renderRobotsTxt(url), {
-        headers: {
-          "content-type": "text/plain; charset=UTF-8",
-          "cache-control": "public, max-age=3600",
-        },
-      });
-    }
-
-    if (url.pathname === "/sitemap.xml") {
-      return new Response(renderSitemapXml(url), {
-        headers: {
-          "content-type": "application/xml; charset=UTF-8",
-          "cache-control": "public, max-age=3600",
-        },
-      });
-    }
-
-    if (url.pathname === "/" || url.pathname === "/index.html") {
-      return new Response(renderHtml(url, env.WEB_ANALYTICS_TOKEN), {
-        headers: {
-          "content-type": "text/html; charset=UTF-8",
-          "cache-control": "no-store",
-        },
-      });
-    }
-
-    if (STATIC_PAGES[url.pathname]) {
-      return new Response(renderStaticPage(url, env.WEB_ANALYTICS_TOKEN, STATIC_PAGES[url.pathname]), {
-        headers: {
-          "content-type": "text/html; charset=UTF-8",
-          "cache-control": "public, max-age=300",
-        },
-      });
-    }
-
-    return new Response("Not found", { status: 404 });
-  },
+  fetch: app.fetch,
 
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(maintainCollector(env, controller.scheduledTime));

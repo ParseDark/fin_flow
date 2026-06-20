@@ -1,3 +1,10 @@
+import { SITE_NAME, SITE_TITLE, SITE_DESCRIPTION } from "../constants.js";
+import {
+  escapeHtml,
+  buildCanonicalUrl,
+  renderWebAnalyticsScript,
+} from "../helpers.js";
+
 export const STATIC_PAGES = {
   "/about": {
     title: "关于本站 | 题材资金流回放",
@@ -74,3 +81,75 @@ export const STATIC_PAGES = {
     ],
   },
 };
+
+export function renderStaticPage(requestUrl, webAnalyticsToken, page) {
+  const canonicalUrl = buildCanonicalUrl(requestUrl);
+  const webAnalyticsScript = renderWebAnalyticsScript(webAnalyticsToken);
+  const structuredData = JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "Article",
+    headline: page.heading,
+    description: page.description,
+    inLanguage: "zh-CN",
+    mainEntityOfPage: canonicalUrl,
+    url: canonicalUrl,
+  });
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${escapeHtml(page.title)}</title>
+    <meta name="description" content="${escapeHtml(page.description)}" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <link rel="canonical" href="${escapeHtml(canonicalUrl)}" />
+    <meta property="og:type" content="article" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:site_name" content="${escapeHtml(SITE_NAME)}" />
+    <meta property="og:title" content="${escapeHtml(page.title)}" />
+    <meta property="og:description" content="${escapeHtml(page.description)}" />
+    <meta property="og:url" content="${escapeHtml(canonicalUrl)}" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="${escapeHtml(page.title)}" />
+    <meta name="twitter:description" content="${escapeHtml(page.description)}" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/basecoat-css@0.3.11/dist/basecoat.cdn.min.css">
+    <style>
+      :root { color-scheme: light; --bg:#fafafa; --panel:#fff; --line:rgba(39,39,42,.12); --text:#18181b; --muted:rgba(39,39,42,.68); }
+      * { box-sizing: border-box; }
+      body { margin:0; background:linear-gradient(180deg,#fafafa,#f4f4f5); color:var(--text); font-family:"Avenir Next","Segoe UI",sans-serif; }
+      .page { width:min(920px,calc(100% - 28px)); margin:0 auto; padding:28px 0 56px; }
+      .panel { background:rgba(255,255,255,.96); border:1px solid var(--line); border-radius:24px; padding:24px; box-shadow:0 8px 30px rgba(0,0,0,.04); }
+      h1 { margin:0 0 12px; font-size:clamp(32px,5vw,52px); line-height:1; letter-spacing:-.04em; }
+      h2 { margin:28px 0 10px; font-size:24px; }
+      p { margin:0 0 14px; line-height:1.8; color:var(--muted); }
+      .eyebrow { margin-bottom:10px; font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:#a16207; }
+      .topnav { display:flex; gap:14px; flex-wrap:wrap; margin-top:16px; }
+      a { color:#0f766e; text-decoration:none; }
+      a:hover { text-decoration:underline; }
+    </style>
+    <script type="application/ld+json">${structuredData}</script>
+  </head>
+  <body>
+    <main class="page">
+      <article class="panel">
+        <div class="eyebrow">${escapeHtml(SITE_NAME)}</div>
+        <h1>${escapeHtml(page.heading)}</h1>
+        <p>${escapeHtml(page.intro)}</p>
+        ${page.sections.map((section) => `
+        <section>
+          <h2>${escapeHtml(section.title)}</h2>
+          ${section.paragraphs.map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`).join("")}
+        </section>`).join("")}
+        <nav class="topnav">
+          <a href="/">返回首页</a>
+          <a href="/about">关于本站</a>
+          <a href="/guide/a-share-concept-flow">A股概念资金流怎么看</a>
+          <a href="/methodology">数据口径与方法说明</a>
+        </nav>
+      </article>
+    </main>
+    ${webAnalyticsScript}
+  </body>
+</html>`;
+}

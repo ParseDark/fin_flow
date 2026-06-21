@@ -1838,16 +1838,26 @@ filterButtons.forEach((btn) => {
   });
 });
 
-document.getElementById("concepts-grid").addEventListener("click", (event) => {
+window.__finFlowOpenStockDrawer = openStockDrawer;
+
+document.addEventListener("click", (event) => {
   const item = event.target.closest(".concept-item[data-concept-code]");
-  if (!item) return;
+  const grid = document.getElementById("concepts-grid");
+  if (!grid || !item || !grid.contains(item)) return;
   openStockDrawer(item.dataset.conceptCode);
 });
 
-document.getElementById("concepts-grid").addEventListener("keydown", (event) => {
+document.addEventListener("finflow:open-stock-drawer", (event) => {
+  const conceptCode = event.detail?.code;
+  if (!conceptCode) return;
+  openStockDrawer(conceptCode);
+});
+
+document.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
   const item = event.target.closest(".concept-item[data-concept-code]");
-  if (!item) return;
+  const grid = document.getElementById("concepts-grid");
+  if (!grid || !item || !grid.contains(item)) return;
   event.preventDefault();
   openStockDrawer(item.dataset.conceptCode);
 });

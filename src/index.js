@@ -48,6 +48,18 @@ app.get("/api/finance", async (c) => {
   return withNoIndex(response);
 });
 
+app.get("/api/plate-stocks", async (c) => {
+  const url = new URL(c.req.url);
+  const code = url.searchParams.get("code") || "";
+
+  return withNoIndex(Response.json({
+    code,
+    name: code,
+    series: [],
+    samples: [],
+  }));
+});
+
 app.get("/api/admin/trigger", async (c) => {
   const stub = getCollectorStub(c.env);
   return withNoIndex(await stub.fetch("https://collector.internal/collect"));

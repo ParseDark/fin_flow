@@ -1,1 +1,183 @@
 /* React entry styles are supplied by the migrated app shell. */
+
+/* ---- Tline page styles ---- */
+
+.tline-page {
+  padding-top: 20px;
+}
+
+.tline-chart-wrapper {
+  border: 1px solid rgba(24, 24, 27, 0.14);
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(24, 24, 27, 0.96), rgba(39, 39, 42, 0.94)),
+    radial-gradient(circle at top, rgba(255,255,255,0.04), transparent 38%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 8px 30px rgba(0, 0, 0, 0.08);
+  padding: 16px;
+  margin-top: 8px;
+}
+
+.dark .tline-chart-wrapper {
+  border-color: rgba(244, 244, 245, 0.08);
+  background:
+    linear-gradient(180deg, rgba(9, 9, 11, 0.98), rgba(24, 24, 27, 0.96)),
+    radial-gradient(circle at top, rgba(255,255,255,0.05), transparent 38%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 8px 30px rgba(0, 0, 0, 0.2);
+}
+
+.tline-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.tline-grid-line {
+  stroke: rgba(244, 244, 245, 0.08);
+  stroke-width: 1;
+}
+
+.tline-axis-label {
+  fill: rgba(244, 244, 245, 0.5);
+  font-size: 11px;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+}
+
+.tline-prev-close {
+  stroke: rgba(244, 244, 245, 0.25);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+.tline-path {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Table */
+.tline-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: 12px;
+}
+
+.tline-table th,
+.tline-table td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.tline-table th {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.tline-table td.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tline-table .up {
+  color: var(--up);
+  font-weight: 600;
+}
+
+.tline-table .down {
+  color: var(--down);
+  font-weight: 600;
+}
+
+.tline-table tbody tr {
+  transition: background 0.15s ease;
+}
+
+.tline-table tbody tr:hover {
+  background: rgba(63, 63, 70, 0.04);
+}
+
+/* Tooltip */
+.tline-tooltip {
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 14px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  backdrop-filter: blur(10px);
+  font-size: 12px;
+  min-width: 160px;
+  z-index: 10;
+}
+
+.tline-tooltip-time {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.tline-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+
+.tline-tooltip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.tline-tooltip-name {
+  flex: 1;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tline-tooltip-pct {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tline-tooltip-price {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: 4px;
+}
+
+/* Error */
+.tline-error {
+  padding: 12px 16px;
+  background: rgba(220, 38, 38, 0.08);
+  border: 1px solid rgba(220, 38, 38, 0.2);
+  border-radius: 12px;
+  color: var(--up);
+  font-size: 13px;
+  margin-top: 12px;
+}
+
+/* Loading */
+.tline-skeleton {
+  height: 300px;
+  border-radius: 20px;
+  background: linear-gradient(90deg, var(--line-soft) 25%, transparent 50%, var(--line-soft) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes skeleton-pulse {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

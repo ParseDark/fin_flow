@@ -119,6 +119,46 @@ app.get("/", (c) => {
   });
 });
 
+// ---- Tline API proxy (bypass CORS) ----
+app.get("/api/tline", async (c) => {
+  const url = new URL(c.req.url);
+  const code = url.searchParams.get("code");
+  if (!code) {
+    return c.json({ error: "missing code param" }, 400);
+  }
+
+  try {
+    const upstream = await fetch(
+      `https://x-quote.cls.cn/v2/quote/a/tline?app=CailianpressWeb&os=web&secu_code=${encodeURIComponent(code)}&sv=8.7.9`,
+      {
+        headers: {
+          "Accept": "application/json, text/plain, */*",
+          "Accept-Language": "en,zh-CN;q=0.9,zh;q=0.8",
+          "Content-Type": "application/json",
+          "Origin": "https://www.cls.cn",
+          "Referer": "https://www.cls.cn/",
+          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        },
+      }
+    );
+    const data = await upstream.json();
+    return c.json(data);
+  } catch (e) {
+    return c.json({ error: e.message }, 502);
+  }
+});
+
+// ---- Tline page (stock timeline comparison) ----
+app.get("/tline", (c) => {
+  const url = new URL(c.req.url);
+  return new Response(renderHtml(url, c.env.WEB_ANALYTICS_TOKEN), {
+    headers: {
+      "content-type": "text/html; charset=UTF-8",
+      "cache-control": "no-store",
+    },
+  });
+});
+
 // ---- 404 ----
 app.notFound(() => new Response("Not found", { status: 404 }));
 

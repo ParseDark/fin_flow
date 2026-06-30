@@ -839,7 +839,8 @@ function currentConcept() {
 
 function stockSnapshotForConcept(conceptCode, index = state.index) {
   if (state.stockDrawerData?.code !== conceptCode) return null;
-  return state.stockDrawerData.samples?.[index] || null;
+  // We only have a single snapshot (current), not per-time-index data
+  return state.stockDrawerData.samples?.[0] || null;
 }
 
 function buildStockSeries(conceptCode) {
@@ -856,16 +857,59 @@ async function fetchStockDrawerData(conceptCode, options = {}) {
     return state.stockDrawerData;
   }
 
+  // 1. Fetch stock list for this concept
   const params = new URLSearchParams();
   if (date) params.set("date", date);
   params.set("code", conceptCode);
+  const listRes = await fetch("/api/plate-stocks?" + params.toString(), { cache: "no-store" });
+  if (!listRes.ok) throw new Error("加载板块个股失败");
+  const listData = await listRes.json();
 
-  const response = await fetch("/api/plate-stocks?" + params.toString(), { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error("加载板块个股分时失败");
+  // 2. Fetch tline data for each stock in parallel (limit to top 20)
+  const stockCodes = (listData.stocks || []).slice(0, 20).map((s) => s.code);
+  const tlineResults = await Promise.allSettled(
+    stockCodes.map(async (code) => {
+      const res = await fetch("/api/tline?code=" + encodeURIComponent(code), { cache: "no-store" });
+      if (!res.ok) return null;
+      return res.json();
+    })
+  );
+
+  // 3. Build series from tline data
+  const series = [];
+  const stockTlineMap = new Map();
+  tlineResults.forEach((r, i) => {
+    if (r.status === "fulfilled" && r.value?.data?.line) {
+      stockTlineMap.set(stockCodes[i], r.value.data.line);
+    }
+  });
+
+  for (const stock of (listData.stocks || [])) {
+    const line = stockTlineMap.get(stock.code);
+    if (!line) continue;
+    series.push({
+      code: stock.code,
+      name: stock.name,
+      data: line.map((pt) => pt.change || 0),
+    });
   }
 
-  const payload = await response.json();
+  // 4. Build samples with stock list for the table
+  const sampleStocks = (listData.stocks || []).map((s) => ({
+    code: s.code,
+    name: s.name,
+    fundflow: 0,
+    change: s.change || 0,
+    isCore: s.isCore || false,
+  }));
+
+  const payload = {
+    code: conceptCode,
+    name: listData.name || conceptCode,
+    series,
+    samples: [{ stocks: sampleStocks }],
+  };
+
   state.stockDrawerCache[cacheKey] = payload;
   state.stockDrawerData = payload;
   return payload;
@@ -916,9 +960,12 @@ function renderStockDrawer() {
   if (state.stockDrawerLoading) {
     meta.textContent = "正在加载板块个股分时...";
   } else {
-    meta.textContent = (state.data.sampleTimes[state.index] || "--:--:--") + " · " + series.length + " 只个股 · 按当前板块样本同步回放";
+    meta.textContent = series.length + " 只个股 · 分时走势";
   }
-  stockChart.xAxis[0].setCategories(state.data.sampleTimes, false);
+
+  // Use tline time labels for x-axis (minute-level, full trading day)
+  const tlineTimes = series.length > 0 ? buildTlineTimeLabels(series[0].data.length) : [];
+  stockChart.xAxis[0].setCategories(tlineTimes, false);
 
   series.forEach((item) => {
     const existing = stockChart.series.find((s) => s.options.id === item.code);
@@ -933,7 +980,7 @@ function renderStockDrawer() {
         { value: 0, color: "#22c55e" },
         { color },
       ],
-      data: visiblePlaybackData(item.data),
+      data: item.data,
     };
     if (existing) {
       existing.update({ name: options.name, color, zones: options.zones }, false);
@@ -947,8 +994,6 @@ function renderStockDrawer() {
     .filter((chartSeries) => !series.some((item) => item.code === chartSeries.options.id))
     .forEach((chartSeries) => chartSeries.remove(false));
 
-  stockChart.xAxis[0].removePlotLine("stock-playhead");
-  stockChart.xAxis[0].addPlotLine({ id: "stock-playhead", value: state.index, color: "#ffd36b", width: 1.5, zIndex: 5, dashStyle: "Dash" });
   stockChart.redraw();
 
   if (state.stockDrawerLoading) {
@@ -1837,6 +1882,22 @@ filterButtons.forEach((btn) => {
     if (state.data) setIndex(state.index);
   });
 });
+
+/**
+ * Build time labels for tline data (271 entries: 9:30-11:30 + 13:00-15:30).
+ */
+function buildTlineTimeLabels(count) {
+  const labels = [];
+  // Morning: 9:30 (570 min from midnight) to 11:30 (690 min) = 121 entries
+  for (let m = 570; m <= 690 && labels.length < count; m++) {
+    labels.push(String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0"));
+  }
+  // Afternoon: 13:00 (780 min) to 15:30 (930 min) = 151 entries (total 272, API returns 271)
+  for (let m = 780; m <= 930 && labels.length < count; m++) {
+    labels.push(String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0"));
+  }
+  return labels.slice(0, count);
+}
 
 window.__finFlowOpenStockDrawer = openStockDrawer;
 

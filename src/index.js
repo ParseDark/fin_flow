@@ -51,13 +51,34 @@ app.get("/api/finance", async (c) => {
 app.get("/api/plate-stocks", async (c) => {
   const url = new URL(c.req.url);
   const code = url.searchParams.get("code") || "";
+  if (!code) {
+    return withNoIndex(Response.json({ code: "", name: "", stocks: [], error: "missing code" }, { status: 400 }));
+  }
 
-  return withNoIndex(Response.json({
-    code,
-    name: code,
-    series: [],
-    samples: [],
-  }));
+  try {
+    const upstream = await fetch(
+      `https://x-quote.cls.cn/v2/quote/a/plate/stocks?app=CailianpressWeb&os=web&sv=8.4.6&plate_code=${encodeURIComponent(code)}`,
+      {
+        headers: {
+          "Accept": "application/json, text/plain, */*",
+          "Origin": "https://www.cls.cn",
+          "Referer": "https://www.cls.cn/",
+          "User-Agent": "Mozilla/5.0",
+        },
+      }
+    );
+    const json = await upstream.json();
+    const stocks = (json?.data?.stocks || []).slice(0, 20).map((s) => ({
+      code: s.stock_code,
+      name: s.stock_name,
+      change: parseFloat(String(s.change).replace("%", "")) || 0,
+      isCore: s.is_core === 1,
+    }));
+
+    return withNoIndex(Response.json({ code, name: code, stocks }));
+  } catch (e) {
+    return withNoIndex(Response.json({ code, name: code, stocks: [], error: e.message }, { status: 502 }));
+  }
 });
 
 app.get("/api/admin/trigger", async (c) => {

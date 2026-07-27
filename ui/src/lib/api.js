@@ -4,6 +4,12 @@ export async function fetchStatus() {
   return response.json();
 }
 
+export async function fetchAnalytics() {
+  const response = await fetch("/api/analytics", { cache: "no-store" });
+  if (!response.ok) throw new Error("加载访问统计失败");
+  return response.json();
+}
+
 export async function fetchFinanceDay(date) {
   const query = date ? `?date=${encodeURIComponent(date)}` : "";
   const response = await fetch(`/api/finance${query}`, { cache: "no-store" });

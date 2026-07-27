@@ -1,7 +1,7 @@
 import { DISPLAY_CONCEPT_COUNT, DEFAULT_FLOW_GROUP_SIZE } from "../../../src/constants.js";
 import { formatSessionLabel, formatStatusTime } from "../lib/format.js";
 
-export function Hero({ status }) {
+export function Hero({ status, analytics }) {
   return (
     <section className="hero">
       <article className="panel hero-copy">
@@ -50,6 +50,8 @@ export function Hero({ status }) {
           <StatusPill label="交易阶段" id="status-session" value={formatSessionLabel(status?.currentTradingSession)} badge />
           <StatusPill label="下次采集" id="status-next-run" value={formatStatusTime(status?.nextRunAt)} kbd />
           <StatusPill label="今日样本" id="status-samples" value={String(status?.samplesToday ?? "--")} kbd />
+          <StatusPill label="日活" id="status-dau" value={String(analytics?.dailyActive ?? "--")} badge />
+          <StatusPill label="月活" id="status-mau" value={String(analytics?.monthlyActive ?? "--")} badge />
         </div>
       </article>
     </section>

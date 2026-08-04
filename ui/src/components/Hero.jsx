@@ -16,7 +16,8 @@ export function Hero({ status, analytics }) {
           支持按交易日查看、日内回放、盘面观察与收盘复盘，帮助你更直观地理解题材轮动和资金迁移。
         </p>
         <p className="lead" style={{ marginTop: 14 }}>
-          延伸阅读： <a href="/about">关于本站</a> / <a href="/guide/a-share-concept-flow">A股概念资金流怎么看</a> /{" "}
+          区间分析： <a href="/aggregate">资金分位汇总</a> / 延伸阅读：{" "}
+          <a href="/about">关于本站</a> / <a href="/guide/a-share-concept-flow">A股概念资金流怎么看</a> /{" "}
           <a href="/methodology">数据口径与方法说明</a>
         </p>
       </article>
@@ -98,4 +99,3 @@ function MoonIcon() {
     </svg>
   );
 }
-

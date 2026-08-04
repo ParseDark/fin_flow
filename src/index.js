@@ -6,6 +6,7 @@ import { renderHtml } from "./pages/index.js";
 import { STATIC_PAGES, renderStaticPage } from "./pages/static.js";
 import { renderRobotsTxt, renderSitemapXml } from "./pages/sitemap.js";
 import { fetchAnalyticsSummaryCached } from "./analytics.js";
+import { renderAggregateMarkdown } from "./aggregate.js";
 
 export { CapitalFlowCollector } from "./collector.js";
 
@@ -96,6 +97,38 @@ app.get("/api/status", async (c) => {
   const stub = getCollectorStub(c.env);
   return withNoIndex(await stub.fetch("https://collector.internal/status"));
 });
+
+app.get("/api/aggregate", async (c) => {
+  const stub = getCollectorStub(c.env);
+  const response = await stub.fetch(buildAggregateInternalUrl(c.req.url));
+  return withNoIndex(response);
+});
+
+// Markdown 输出，供下游 AI / LLM 直接消费。
+// ?section=favored|abandoned|trend|netflow|change 可只取其中一段，省 token。
+const handleAggregateMarkdown = async (c) => {
+  const stub = getCollectorStub(c.env);
+  const response = await stub.fetch(buildAggregateInternalUrl(c.req.url));
+  const json = await response.json().catch(() => null);
+  const section = new URL(c.req.url).searchParams.get("section") || "";
+
+  if (!response.ok || !json || json.error) {
+    return new Response(`# 错误\n\n${json?.error || "No closing data in selected range"}\n`, {
+      status: 404,
+      headers: { "content-type": "text/markdown; charset=UTF-8" },
+    });
+  }
+
+  return new Response(renderAggregateMarkdown(json, section), {
+    headers: {
+      "content-type": "text/markdown; charset=UTF-8",
+      "cache-control": "public, max-age=60, stale-while-revalidate=120",
+    },
+  });
+};
+
+app.get("/api/aggregate.md", handleAggregateMarkdown);
+app.get("/aggregate.md", handleAggregateMarkdown);
 
 app.get("/api/analytics", async (c) => {
   const token = c.env.CF_ANALYTICS_TOKEN;
@@ -194,6 +227,17 @@ app.get("/tline", (c) => {
   });
 });
 
+// ---- Aggregate page (range fund-flow percentile summary) ----
+app.get("/aggregate", (c) => {
+  const url = new URL(c.req.url);
+  return new Response(renderHtml(url, c.env.WEB_ANALYTICS_TOKEN), {
+    headers: {
+      "content-type": "text/html; charset=UTF-8",
+      "cache-control": "no-store",
+    },
+  });
+});
+
 // ---- 404 ----
 app.notFound(() => new Response("Not found", { status: 404 }));
 
@@ -212,6 +256,18 @@ export default {
 function getCollectorStub(env) {
   const id = env.COLLECTOR.idFromName("capital-flow-primary");
   return env.COLLECTOR.get(id);
+}
+
+// 把外部请求的 start/end/limit 参数透传给 DO 内部 /aggregate。
+function buildAggregateInternalUrl(requestUrl) {
+  const source = new URL(requestUrl);
+  const params = new URLSearchParams();
+  for (const key of ["start", "end", "limit"]) {
+    const value = source.searchParams.get(key);
+    if (value) params.set(key, value);
+  }
+  const query = params.toString();
+  return `https://collector.internal/aggregate${query ? `?${query}` : ""}`;
 }
 
 function shouldCollectFromStatus(status, now = new Date()) {

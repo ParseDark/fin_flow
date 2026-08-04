@@ -28,6 +28,10 @@ import {
   fetchAnchorEvents,
   toNumber,
 } from "./helpers.js";
+import {
+  isClosingSnapshot,
+  buildAggregatePayload,
+} from "./aggregate.js";
 
 export class CapitalFlowCollector extends DurableObject {
   constructor(ctx, env) {
@@ -64,6 +68,22 @@ export class CapitalFlowCollector extends DurableObject {
       return Response.json(payload, {
         headers: {
           "cache-control": "public, max-age=5, stale-while-revalidate=10",
+        },
+      });
+    }
+
+    if (url.pathname === "/aggregate") {
+      const payload = await this.getAggregatePayload(
+        url.searchParams.get("start") || "",
+        url.searchParams.get("end") || "",
+        Number(url.searchParams.get("limit") || 10),
+      );
+      if (!payload) {
+        return Response.json({ error: "No closing data in selected range" }, { status: 404 });
+      }
+      return Response.json(payload, {
+        headers: {
+          "cache-control": "public, max-age=60, stale-while-revalidate=120",
         },
       });
     }
@@ -246,6 +266,47 @@ export class CapitalFlowCollector extends DurableObject {
     };
   }
 
+  // 区间汇总：数据源是 DO 存储的按日 chunked 样本（与本地 QuestDB 不同）。
+  // 每个交易日只取最后一个快照作为收盘快照，避免把当日全部样本读入内存。
+  async getAggregatePayload(startDate, endDate, limit) {
+    const availableDates = ((await this.ctx.storage.get("availableDates")) || []).sort();
+    if (!availableDates.length) return null;
+
+    const defaultEnd = endDate || availableDates.at(-1);
+    // 默认取最近 7 天（含首尾，即最新交易日往前 6 天），与 RETAIN_DAYS 保留窗口一致。
+    const defaultStart = startDate || addDaysToDateKey(defaultEnd, -(RETAIN_DAYS - 1));
+    const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
+
+    const closes = [];
+    const excluded = [];
+    for (const dateKey of availableDates) {
+      if (dateKey < defaultStart || dateKey > defaultEnd) continue;
+
+      const lastSample = await readDayLastSample(this.ctx.storage, dateKey);
+      if (!lastSample) continue;
+
+      const expanded = expandSample(lastSample);
+      if (!isClosingSnapshot(expanded.updatedAt)) {
+        excluded.push(dateKey);
+        continue;
+      }
+      if (!Array.isArray(expanded.concepts) || !expanded.concepts.length) continue;
+
+      closes.push({
+        date: dateKey,
+        updatedAt: expanded.updatedAt,
+        concepts: expanded.concepts,
+      });
+    }
+
+    return buildAggregatePayload(closes, excluded, {
+      startDate: defaultStart,
+      endDate: defaultEnd,
+      limit: safeLimit,
+      availableDates,
+    });
+  }
+
   async getStatus() {
     const now = new Date();
     const chinaNow = getChinaParts(now);
@@ -285,6 +346,12 @@ export class CapitalFlowCollector extends DurableObject {
 
 function dayStorageKey(dateKey) {
   return `day:${dateKey}`;
+}
+
+function addDaysToDateKey(dateKey, days) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return date.toISOString().slice(0, 10);
 }
 
 function dayMetaKey(dateKey) {
@@ -328,6 +395,19 @@ async function readDaySamples(storage, dateKey) {
 
   const chunks = await Promise.all(chunkReads);
   return chunks.flatMap((chunk) => chunk || []);
+}
+
+// 只读当日最后一个样本（最后一个 chunk 的末尾元素），
+// 避免区间汇总把整日 1500 条样本全部读进内存。
+async function readDayLastSample(storage, dateKey) {
+  const meta = await storage.get(dayMetaKey(dateKey));
+  if (!meta || !meta.chunkCount) {
+    const legacySamples = (await storage.get(dayStorageKey(dateKey))) || [];
+    return legacySamples.at(-1) || null;
+  }
+
+  const lastChunk = (await storage.get(dayChunkKey(dateKey, meta.chunkCount - 1))) || [];
+  return lastChunk.at(-1) || null;
 }
 
 function buildSampleWindowIndices(totalSamples, limit) {

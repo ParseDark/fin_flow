@@ -230,7 +230,11 @@ app.get("/tline", (c) => {
 // ---- Aggregate page (range fund-flow percentile summary) ----
 app.get("/aggregate", (c) => {
   const url = new URL(c.req.url);
-  return new Response(renderHtml(url, c.env.WEB_ANALYTICS_TOKEN), {
+  return new Response(renderHtml(url, c.env.WEB_ANALYTICS_TOKEN, {
+    title: "资金分位汇总：一段时间里资金往哪搬 | 题材资金流回放",
+    description:
+      "按区间汇总 A 股概念板块主力资金收盘快照，用当日横截面资金分位消除概念规模差异，对比区间前后半段，找出资金真正的迁移方向。",
+  }), {
     headers: {
       "content-type": "text/html; charset=UTF-8",
       "cache-control": "no-store",

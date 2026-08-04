@@ -18,7 +18,7 @@ export function renderRobotsTxt() {
 
 export function renderSitemapXml(url) {
   const lastmod = new Date().toISOString();
-  const urls = ["/", ...Object.keys(STATIC_PAGES)];
+  const urls = ["/", "/aggregate", ...Object.keys(STATIC_PAGES)];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   ${urls.map((path) => `  <url>

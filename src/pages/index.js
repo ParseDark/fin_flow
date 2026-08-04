@@ -96,8 +96,11 @@ function renderFrontendScript() {
 
 // ---- Main export ----
 
-export function renderHtml(requestUrl, webAnalyticsToken) {
+export function renderHtml(requestUrl, webAnalyticsToken, meta = {}) {
   const canonicalUrl = buildCanonicalUrl(requestUrl);
+  // per-page SEO 覆盖：SPA 页（如 /aggregate）可传 { title, description }，缺省回退全局值。
+  const title = meta.title || SITE_TITLE;
+  const description = meta.description || SITE_DESCRIPTION;
   const structuredData = renderStructuredData(canonicalUrl);
   const webAnalyticsScript = renderWebAnalyticsScript(webAnalyticsToken);
 
@@ -106,20 +109,20 @@ export function renderHtml(requestUrl, webAnalyticsToken) {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>${escapeHtml(SITE_TITLE)}</title>
-    <meta name="description" content="${escapeHtml(SITE_DESCRIPTION)}" />
+    <title>${escapeHtml(title)}</title>
+    <meta name="description" content="${escapeHtml(description)}" />
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="theme-color" content="#fafafa" />
     <link rel="canonical" href="${escapeHtml(canonicalUrl)}" />
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="zh_CN" />
     <meta property="og:site_name" content="${escapeHtml(SITE_NAME)}" />
-    <meta property="og:title" content="${escapeHtml(SITE_TITLE)}" />
-    <meta property="og:description" content="${escapeHtml(SITE_DESCRIPTION)}" />
+    <meta property="og:title" content="${escapeHtml(title)}" />
+    <meta property="og:description" content="${escapeHtml(description)}" />
     <meta property="og:url" content="${escapeHtml(canonicalUrl)}" />
     <meta name="twitter:card" content="summary" />
-    <meta name="twitter:title" content="${escapeHtml(SITE_TITLE)}" />
-    <meta name="twitter:description" content="${escapeHtml(SITE_DESCRIPTION)}" />
+    <meta name="twitter:title" content="${escapeHtml(title)}" />
+    <meta name="twitter:description" content="${escapeHtml(description)}" />
     ${renderThemeInit()}
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/basecoat-css@0.3.11/dist/basecoat.cdn.min.css">
     <script src="https://cdn.jsdelivr.net/npm/basecoat-css@0.3.11/dist/js/basecoat.min.js" defer></script>

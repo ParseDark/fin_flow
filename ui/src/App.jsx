@@ -9,11 +9,9 @@ import { StockDrawer } from "./components/StockDrawer.jsx";
 import { startLegacyController } from "./legacyController.js";
 import { useFinanceSnapshot } from "./hooks/useFinanceSnapshot.js";
 import { useStatusBridge } from "./hooks/useStatusBridge.js";
-import { useAnalyticsBridge } from "./hooks/useAnalyticsBridge.js";
 
 export default function App() {
   const status = useStatusBridge();
-  const analytics = useAnalyticsBridge();
   const finance = useFinanceSnapshot();
 
   useEffect(() => {
@@ -26,7 +24,7 @@ export default function App() {
     <>
       <style>{CSS_CONTENT}</style>
       <main className="page">
-        <Hero status={status} analytics={analytics} />
+        <Hero status={status} />
         <Controls />
         <MetricGrid data={finance.data} sample={finance.sample} loading={finance.loading} />
         <ChartPanel loading={finance.loading} />

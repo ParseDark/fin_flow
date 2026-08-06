@@ -5,7 +5,6 @@ import { CapitalFlowCollector } from "./collector.js";
 import { renderHtml } from "./pages/index.js";
 import { STATIC_PAGES, renderStaticPage } from "./pages/static.js";
 import { renderRobotsTxt, renderSitemapXml } from "./pages/sitemap.js";
-import { fetchAnalyticsSummaryCached } from "./analytics.js";
 import { renderAggregateMarkdown } from "./aggregate.js";
 
 export { CapitalFlowCollector } from "./collector.js";
@@ -129,19 +128,6 @@ const handleAggregateMarkdown = async (c) => {
 
 app.get("/api/aggregate.md", handleAggregateMarkdown);
 app.get("/aggregate.md", handleAggregateMarkdown);
-
-app.get("/api/analytics", async (c) => {
-  const token = c.env.CF_ANALYTICS_TOKEN;
-  if (!token) {
-    return withNoIndex(Response.json({ error: "analytics not configured" }, { status: 503 }));
-  }
-  try {
-    const summary = await fetchAnalyticsSummaryCached(token, c.executionCtx);
-    return withNoIndex(Response.json(summary));
-  } catch (e) {
-    return withNoIndex(Response.json({ error: e.message }, { status: 502 }));
-  }
-});
 
 // ---- Static assets ----
 app.get("/robots.txt", (c) => {
